@@ -1,77 +1,192 @@
 
-
 // const Order = require('../models/Order');
 // const Product = require('../models/Product');
-
+ 
 // // ============================================================
-// // HELPER: Calculate profit for a single order item
+// // HELPER: Get variant/sub-variant cost from product
 // // ============================================================
-// const calculateItemProfit = (item) => {
-//   // Selling price = discountPrice if exists, else regularPrice
-//   const sellingPrice = item.discountPrice && item.discountPrice > 0 
-//     ? item.discountPrice 
-//     : item.regularPrice;
-  
-//   // Revenue = selling price × quantity
-//   const revenue = sellingPrice * item.quantity;
-  
-//   // Cost = costPerItem × quantity (get from product if not in order item)
-//   const costPerItem = item.costPerItem || item.buyingPrice || 0;
-//   const cost = costPerItem * item.quantity;
-  
-//   // Profit = Revenue - Cost
-//   const profit = revenue - cost;
-  
-//   // Profit Margin = (Profit / Revenue) × 100
-//   const profitMargin = revenue > 0 ? (profit / revenue) * 100 : 0;
-  
-//   return {
-//     sellingPrice,
-//     revenue,
-//     cost,
-//     profit,
-//     profitMargin
-//   };
+// const getVariantCostFromProduct = (product, variantId, subVariantId) => {
+//   if (!product || !product.variantTypes || !variantId) return 0;
+ 
+//   for (const vt of product.variantTypes) {
+//     for (const v of (vt.variants || [])) {
+//       if (v.id === variantId) {
+//         if (subVariantId && v.subVariants) {
+//           const sv = v.subVariants.find(s => s.id === subVariantId);
+//           if (sv) {
+//             return Number(sv.costPerItem) || 0;
+//           }
+//         }
+//         return Number(v.costPerItem) || 0;
+//       }
+//     }
+//   }
+//   return 0;
 // };
-
+ 
 // // ============================================================
-// // GET PROFIT MARGIN DATA - FIXED
+// // HELPER: Get selling price for a plain (non-variant) item
+// // ============================================================
+// const getPlainItemSellingPrice = (item) => {
+//   if (item.discountPrice > 0) return Number(item.discountPrice);
+//   return Number(item.regularPrice) || 0;
+// };
+ 
+// // ============================================================
+// // HELPER: Process one order item (product line) into revenue/
+// // cost/profit, breaking down by variant/sub-variant when present,
+// // and updating the running productProfitMap entry for it.
+// // Returns { itemRevenue, itemCost, itemProfit, itemQuantity }
+// // ============================================================
+// const processOrderItem = (item, productDoc, product, productImage) => {
+//   let itemRevenue = 0;
+//   let itemCost = 0;
+//   let itemProfit = 0;
+//   let itemQuantity = 0;
+ 
+//   const variantDetails = item.variantDetails || [];
+//   const hasVariantDetails = variantDetails.length > 0;
+ 
+//   if (hasVariantDetails) {
+//     product.hasVariants = true;
+ 
+//     variantDetails.forEach(vd => {
+//       const variantId = vd.variantId;
+//       const subVariants = vd.subVariants || [];
+//       const hasSubVariants = subVariants.length > 0;
+ 
+//       if (hasSubVariants) {
+//         product.hasSubVariants = true;
+ 
+//         subVariants.forEach(sv => {
+//           const qty = Number(sv.quantity) || 0;
+//           if (qty <= 0) return;
+ 
+//           const sellingPrice = Number(sv.subVariantDiscountPrice) > 0
+//             ? Number(sv.subVariantDiscountPrice)
+//             : (Number(sv.subVariantRegularPrice) || 0);
+ 
+//           let costPerItem = getVariantCostFromProduct(productDoc, variantId, sv.subVariantId);
+//           if (costPerItem === 0) {
+//             costPerItem = (productDoc?.costPerItem || productDoc?.buyingPrice || 0);
+//           }
+ 
+//           const revenue = sellingPrice * qty;
+//           const cost = costPerItem * qty;
+//           const profit = revenue - cost;
+ 
+//           itemRevenue += revenue;
+//           itemCost += cost;
+//           itemProfit += profit;
+//           itemQuantity += qty;
+ 
+//           const key = `${variantId}_${sv.subVariantId}`;
+//           if (!product.variantBreakdownMap[key]) {
+//             product.variantBreakdownMap[key] = {
+//               variantId,
+//               variantName: vd.variantName || 'Variant',
+//               subVariantId: sv.subVariantId,
+//               subVariantName: sv.subVariantName || 'Sub-Variant',
+//               image: sv.image || vd.image || productImage,
+//               isVariantRow: false,
+//               isSubVariantRow: true,
+//               quantity: 0,
+//               revenue: 0,
+//               cost: 0,
+//               profit: 0
+//             };
+//           }
+//           const vb = product.variantBreakdownMap[key];
+//           vb.quantity += qty;
+//           vb.revenue += revenue;
+//           vb.cost += cost;
+//           vb.profit += profit;
+//         });
+//       } else {
+//         const qty = Number(vd.quantity) || 0;
+//         if (qty <= 0) return;
+ 
+//         const sellingPrice = Number(vd.variantDiscountPrice) > 0
+//           ? Number(vd.variantDiscountPrice)
+//           : (Number(vd.variantRegularPrice) || 0);
+ 
+//         let costPerItem = getVariantCostFromProduct(productDoc, variantId, null);
+//         if (costPerItem === 0) {
+//           costPerItem = (productDoc?.costPerItem || productDoc?.buyingPrice || 0);
+//         }
+ 
+//         const revenue = sellingPrice * qty;
+//         const cost = costPerItem * qty;
+//         const profit = revenue - cost;
+ 
+//         itemRevenue += revenue;
+//         itemCost += cost;
+//         itemProfit += profit;
+//         itemQuantity += qty;
+ 
+//         const key = variantId;
+//         if (!product.variantBreakdownMap[key]) {
+//           product.variantBreakdownMap[key] = {
+//             variantId,
+//             variantName: vd.variantName || 'Variant',
+//             subVariantId: null,
+//             subVariantName: null,
+//             image: vd.image || productImage,
+//             isVariantRow: true,
+//             isSubVariantRow: false,
+//             quantity: 0,
+//             revenue: 0,
+//             cost: 0,
+//             profit: 0
+//           };
+//         }
+//         const vb = product.variantBreakdownMap[key];
+//         vb.quantity += qty;
+//         vb.revenue += revenue;
+//         vb.cost += cost;
+//         vb.profit += profit;
+//       }
+//     });
+//   } else {
+//     // ============================================================
+//     // Plain product line (no variants) — colors or simple quantity.
+//     // Calculation stays exactly as before.
+//     // ============================================================
+//     const qty = Number(item.quantity) || 0;
+//     const sellingPrice = getPlainItemSellingPrice(item);
+//     const costPerItem = (productDoc?.costPerItem || productDoc?.buyingPrice) || item.costPerItem || item.buyingPrice || 0;
+ 
+//     itemRevenue = sellingPrice * qty;
+//     itemCost = costPerItem * qty;
+//     itemProfit = itemRevenue - itemCost;
+//     itemQuantity = qty;
+//   }
+ 
+//   return { itemRevenue, itemCost, itemProfit, itemQuantity };
+// };
+ 
+// // ============================================================
+// // GET PROFIT MARGIN DATA
 // // @route   GET /api/orders/admin/profit-margin
 // // @access  Private (Admin/Moderator/Super Admin)
 // // ============================================================
 // const getProfitMarginData = async (req, res) => {
 //   try {
-//     const { 
-//       period = 'month', 
-//       startDate,
-//       endDate,
-//       limit = 100
-//     } = req.query;
-    
+//     const { period = 'month', startDate, endDate, limit = 100 } = req.query;
 //     const userRole = req.user?.role || 'admin';
-    
+ 
 //     // ============================================
-//     // ✅ FIX: Build date filter properly
+//     // Build date filter
 //     // ============================================
 //     let dateFilter = {};
 //     const now = new Date();
-    
+ 
 //     if (startDate && endDate) {
-//       // For custom date ranges
 //       const start = new Date(startDate);
 //       start.setHours(0, 0, 0, 0);
-      
 //       const end = new Date(endDate);
 //       end.setHours(23, 59, 59, 999);
-      
-//       dateFilter = {
-//         createdAt: {
-//           $gte: start,
-//           $lte: end
-//         }
-//       };
-      
-//       console.log(`📅 Custom date filter: ${start.toISOString()} to ${end.toISOString()}`);
+//       dateFilter = { createdAt: { $gte: start, $lte: end } };
 //     } else {
 //       switch (period) {
 //         case 'today': {
@@ -112,30 +227,28 @@
 //           dateFilter = {};
 //       }
 //     }
-    
-//     // Build query - ONLY delivered and paid orders
+ 
 //     const query = {
 //       orderStatus: 'delivered',
 //       paymentStatus: 'paid',
 //       ...dateFilter
 //     };
-    
-//     // If user is not super_admin/admin/moderator, restrict access
+ 
 //     if (!['super_admin', 'admin', 'moderator'].includes(userRole)) {
-//       return res.status(403).json({ 
-//         success: false, 
-//         error: 'Unauthorized to view profit margin data' 
+//       return res.status(403).json({
+//         success: false,
+//         error: 'Unauthorized to view profit margin data'
 //       });
 //     }
-    
-//     console.log('🔍 Profit Margin Query:', JSON.stringify(query, null, 2));
-    
-//     // Fetch orders
+ 
+//     // ============================================
+//     // Fetch orders with populated product variant data
+//     // ============================================
 //     const orders = await Order.find(query)
-//       .populate('items.productId', 'costPerItem buyingPrice productName')
+//       .populate('items.productId', 'costPerItem buyingPrice productName variantTypes hasVariants')
 //       .sort({ createdAt: -1 })
 //       .limit(parseInt(limit));
-    
+ 
 //     if (!orders || orders.length === 0) {
 //       return res.json({
 //         success: true,
@@ -153,97 +266,78 @@
 //         }
 //       });
 //     }
-    
-//     // ============================================================
-//     // CALCULATE PROFIT FOR EACH ORDER
-//     // ============================================================
+ 
+//     // ============================================
+//     // AGGREGATE
+//     // ============================================
 //     let totalRevenue = 0;
 //     let totalCost = 0;
 //     let totalProfit = 0;
-    
-//     // Product profit aggregation
+ 
 //     const productProfitMap = {};
-    
-//     // Period summary (daily)
 //     const periodMap = {};
-    
+ 
 //     const processedOrders = orders.map(order => {
 //       let orderRevenue = 0;
 //       let orderCost = 0;
 //       let orderProfit = 0;
-      
+//       let orderQuantity = 0;
+ 
 //       const orderItems = order.items.map(item => {
-//         // Get selling price
-//         const sellingPrice = item.discountPrice && item.discountPrice > 0 
-//           ? item.discountPrice 
-//           : item.regularPrice;
-        
-//         // Get cost per item from product or order item
-//         let costPerItem = 0;
-//         if (item.productId && typeof item.productId === 'object') {
-//           costPerItem = item.productId.costPerItem || item.productId.buyingPrice || 0;
-//         } else {
-//           costPerItem = 0;
-//         }
-        
-//         if (costPerItem === 0 && item.costPerItem) {
-//           costPerItem = item.costPerItem;
-//         }
-        
-//         const revenue = sellingPrice * item.quantity;
-//         const cost = costPerItem * item.quantity;
-//         const profit = revenue - cost;
-//         const profitMargin = revenue > 0 ? (profit / revenue) * 100 : 0;
-        
-//         orderRevenue += revenue;
-//         orderCost += cost;
-//         orderProfit += profit;
-        
-//         // Aggregate by product
-//         const productId = item.productId?._id || item.productId?.toString() || 'unknown';
+//         const productDoc = item.productId && typeof item.productId === 'object' ? item.productId : null;
+ 
+//         const productId = productDoc?._id?.toString() || item.productId?.toString() || 'unknown';
 //         const productName = item.productName || 'Unknown Product';
 //         const productImage = item.image || '';
-        
+ 
 //         if (!productProfitMap[productId]) {
 //           productProfitMap[productId] = {
-//             productId: productId,
-//             productName: productName,
+//             productId,
+//             productName,
 //             image: productImage,
 //             totalQuantity: 0,
 //             totalRevenue: 0,
 //             totalCost: 0,
 //             totalProfit: 0,
-//             profitMargin: 0,
 //             averageSellingPrice: 0,
 //             averageBuyingPrice: 0,
-//             costPerItem: costPerItem
+//             hasVariants: false,
+//             hasSubVariants: false,
+//             variantBreakdownMap: {}
 //           };
 //         }
-        
-//         productProfitMap[productId].totalQuantity += item.quantity;
-//         productProfitMap[productId].totalRevenue += revenue;
-//         productProfitMap[productId].totalCost += cost;
-//         productProfitMap[productId].totalProfit += profit;
-//         productProfitMap[productId].averageSellingPrice = 
-//           productProfitMap[productId].totalRevenue / productProfitMap[productId].totalQuantity;
-//         productProfitMap[productId].averageBuyingPrice = costPerItem;
-        
+ 
+//         const product = productProfitMap[productId];
+ 
+//         const { itemRevenue, itemCost, itemProfit, itemQuantity } =
+//           processOrderItem(item, productDoc, product, productImage);
+ 
+//         product.totalQuantity += itemQuantity;
+//         product.totalRevenue += itemRevenue;
+//         product.totalCost += itemCost;
+//         product.totalProfit += itemProfit;
+ 
+//         orderRevenue += itemRevenue;
+//         orderCost += itemCost;
+//         orderProfit += itemProfit;
+//         orderQuantity += itemQuantity;
+ 
+//         const itemProfitMargin = itemRevenue > 0 ? (itemProfit / itemRevenue) * 100 : 0;
+ 
 //         return {
 //           ...item.toObject(),
-//           sellingPrice,
-//           costPerItem,
-//           revenue,
-//           cost,
-//           profit,
-//           profitMargin
+//           revenue: parseFloat(itemRevenue.toFixed(2)),
+//           cost: parseFloat(itemCost.toFixed(2)),
+//           profit: parseFloat(itemProfit.toFixed(2)),
+//           profitMargin: parseFloat(itemProfitMargin.toFixed(2))
 //         };
 //       });
-      
+ 
 //       totalRevenue += orderRevenue;
 //       totalCost += orderCost;
 //       totalProfit += orderProfit;
-      
-//       // Period summary (by day)
+ 
+//       // Period summary
 //       const dateKey = order.createdAt.toISOString().split('T')[0];
 //       if (!periodMap[dateKey]) {
 //         periodMap[dateKey] = {
@@ -257,36 +351,68 @@
 //         };
 //       }
 //       periodMap[dateKey].orders += 1;
-//       periodMap[dateKey].itemsSold += order.items.reduce((sum, item) => sum + item.quantity, 0);
+//       periodMap[dateKey].itemsSold += orderQuantity;
 //       periodMap[dateKey].revenue += orderRevenue;
 //       periodMap[dateKey].cost += orderCost;
 //       periodMap[dateKey].profit += orderProfit;
-      
+ 
 //       return {
 //         ...order.toObject(),
-//         orderRevenue,
-//         orderCost,
-//         orderProfit,
-//         orderProfitMargin: orderRevenue > 0 ? (orderProfit / orderRevenue) * 100 : 0,
+//         orderRevenue: parseFloat(orderRevenue.toFixed(2)),
+//         orderCost: parseFloat(orderCost.toFixed(2)),
+//         orderProfit: parseFloat(orderProfit.toFixed(2)),
+//         orderProfitMargin: orderRevenue > 0 ? parseFloat(((orderProfit / orderRevenue) * 100).toFixed(2)) : 0,
 //         items: orderItems
 //       };
 //     });
-    
-//     // Calculate product profit margins
+ 
+//     // ============================================
+//     // Build product profit details
+//     // ============================================
 //     const productProfitDetails = Object.values(productProfitMap).map(p => {
 //       const profitMargin = p.totalRevenue > 0 ? (p.totalProfit / p.totalRevenue) * 100 : 0;
+//       const averageSellingPrice = p.totalQuantity > 0 ? p.totalRevenue / p.totalQuantity : 0;
+//       const averageBuyingPrice = p.totalQuantity > 0 ? p.totalCost / p.totalQuantity : 0;
+ 
+//       const variantBreakdown = Object.values(p.variantBreakdownMap || {}).map(vb => ({
+//         variantId: vb.variantId,
+//         variantName: vb.variantName,
+//         subVariantId: vb.subVariantId,
+//         subVariantName: vb.subVariantName,
+//         image: vb.image,
+//         isVariantRow: vb.isVariantRow,
+//         isSubVariantRow: vb.isSubVariantRow,
+//         quantity: vb.quantity,
+//         revenue: parseFloat(vb.revenue.toFixed(2)),
+//         cost: parseFloat(vb.cost.toFixed(2)),
+//         profit: parseFloat(vb.profit.toFixed(2)),
+//         profitMargin: vb.revenue > 0
+//           ? parseFloat(((vb.profit / vb.revenue) * 100).toFixed(2))
+//           : 0
+//       }));
+ 
+//       // Sort: group variants together, variant row before its sub-variants
+//       variantBreakdown.sort((a, b) => {
+//         if (a.variantId !== b.variantId) return String(a.variantId).localeCompare(String(b.variantId));
+//         if (a.isVariantRow && !b.isVariantRow) return -1;
+//         if (!a.isVariantRow && b.isVariantRow) return 1;
+//         return 0;
+//       });
+ 
+//       const { variantBreakdownMap, ...rest } = p;
+ 
 //       return {
-//         ...p,
+//         ...rest,
+//         variantBreakdown,
 //         profitMargin: profitMargin.toFixed(2),
 //         totalRevenue: parseFloat(p.totalRevenue.toFixed(2)),
 //         totalCost: parseFloat(p.totalCost.toFixed(2)),
 //         totalProfit: parseFloat(p.totalProfit.toFixed(2)),
-//         averageSellingPrice: parseFloat(p.averageSellingPrice.toFixed(2)),
-//         averageBuyingPrice: parseFloat(p.averageBuyingPrice.toFixed(2))
+//         averageSellingPrice: parseFloat(averageSellingPrice.toFixed(2)),
+//         averageBuyingPrice: parseFloat(averageBuyingPrice.toFixed(2))
 //       };
 //     });
-    
-//     // Calculate period summary
+ 
 //     const periodSummary = Object.values(periodMap).map(p => {
 //       const profitMargin = p.revenue > 0 ? (p.profit / p.revenue) * 100 : 0;
 //       return {
@@ -299,10 +425,9 @@
 //         profitMargin: parseFloat(profitMargin.toFixed(2))
 //       };
 //     }).sort((a, b) => a.date.localeCompare(b.date));
-    
-//     // Summary
+ 
 //     const averageProfitMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
-    
+ 
 //     res.json({
 //       success: true,
 //       data: {
@@ -314,20 +439,20 @@
 //           averageProfitMargin: parseFloat(averageProfitMargin.toFixed(2))
 //         },
 //         productProfitDetails: productProfitDetails.sort((a, b) => b.totalProfit - a.totalProfit),
-//         periodSummary: periodSummary,
+//         periodSummary,
 //         orders: processedOrders
 //       }
 //     });
-    
+ 
 //   } catch (error) {
 //     console.error('Get profit margin error:', error);
-//     res.status(500).json({ 
-//       success: false, 
-//       error: error.message || 'Failed to calculate profit margin' 
+//     res.status(500).json({
+//       success: false,
+//       error: error.message || 'Failed to calculate profit margin'
 //     });
 //   }
 // };
-
+ 
 // // ============================================================
 // // GET PRODUCT PROFIT MARGIN
 // // @route   GET /api/orders/admin/product-profit/:productId
@@ -337,20 +462,20 @@
 //   try {
 //     const { productId } = req.params;
 //     const { period = 'month', startDate, endDate } = req.query;
-    
+ 
 //     const userRole = req.user?.role || 'admin';
-    
+ 
 //     if (!['super_admin', 'admin', 'moderator'].includes(userRole)) {
-//       return res.status(403).json({ 
-//         success: false, 
-//         error: 'Unauthorized to view profit margin data' 
+//       return res.status(403).json({
+//         success: false,
+//         error: 'Unauthorized to view profit margin data'
 //       });
 //     }
-    
-//     // Build date filter
+ 
+//     // Date filter
 //     let dateFilter = {};
 //     const now = new Date();
-    
+ 
 //     if (startDate && endDate) {
 //       const start = new Date(startDate);
 //       start.setHours(0, 0, 0, 0);
@@ -396,69 +521,78 @@
 //           dateFilter = {};
 //       }
 //     }
-    
+ 
 //     const query = {
 //       orderStatus: 'delivered',
 //       paymentStatus: 'paid',
 //       'items.productId': productId,
 //       ...dateFilter
 //     };
-    
-//     const orders = await Order.find(query);
-    
+ 
+//     const orders = await Order.find(query)
+//       .populate('items.productId', 'costPerItem buyingPrice productName variantTypes');
+ 
 //     if (!orders || orders.length === 0) {
 //       return res.json({
 //         success: true,
 //         data: {
+//           productId,
 //           totalOrders: 0,
 //           totalQuantity: 0,
 //           totalRevenue: 0,
 //           totalCost: 0,
 //           totalProfit: 0,
 //           profitMargin: 0,
+//           hasVariants: false,
+//           hasSubVariants: false,
+//           variantBreakdown: [],
 //           orders: []
 //         }
 //       });
 //     }
-    
+ 
 //     let totalQuantity = 0;
 //     let totalRevenue = 0;
 //     let totalCost = 0;
 //     let totalProfit = 0;
-    
+//     let hasVariants = false;
+//     let hasSubVariants = false;
+ 
+//     const variantBreakdownMap = {};
+ 
 //     const orderDetails = orders.map(order => {
 //       let orderQuantity = 0;
 //       let orderRevenue = 0;
 //       let orderCost = 0;
 //       let orderProfit = 0;
-      
+ 
 //       order.items.forEach(item => {
-//         if (item.productId.toString() === productId) {
-//           const sellingPrice = item.discountPrice && item.discountPrice > 0 
-//             ? item.discountPrice 
-//             : item.regularPrice;
-          
-//           let costPerItem = 0;
-//           if (item.productId && typeof item.productId === 'object') {
-//             costPerItem = item.productId.costPerItem || item.productId.buyingPrice || 0;
-//           }
-          
-//           const revenue = sellingPrice * item.quantity;
-//           const cost = costPerItem * item.quantity;
-//           const profit = revenue - cost;
-          
-//           orderQuantity += item.quantity;
-//           orderRevenue += revenue;
-//           orderCost += cost;
-//           orderProfit += profit;
-//         }
+//         const itemProductId = item.productId?._id?.toString() || item.productId?.toString();
+//         if (itemProductId !== productId) return;
+ 
+//         const productDoc = item.productId && typeof item.productId === 'object' ? item.productId : null;
+//         const productImage = item.image || '';
+ 
+//         // Reuse the same nested-aware calculation, but write breakdown
+//         // straight into variantBreakdownMap (product-scoped, not multi-product)
+//         const pseudoProduct = { hasVariants: false, hasSubVariants: false, variantBreakdownMap };
+//         const { itemRevenue, itemCost, itemProfit, itemQuantity } =
+//           processOrderItem(item, productDoc, pseudoProduct, productImage);
+ 
+//         if (pseudoProduct.hasVariants) hasVariants = true;
+//         if (pseudoProduct.hasSubVariants) hasSubVariants = true;
+ 
+//         orderQuantity += itemQuantity;
+//         orderRevenue += itemRevenue;
+//         orderCost += itemCost;
+//         orderProfit += itemProfit;
 //       });
-      
+ 
 //       totalQuantity += orderQuantity;
 //       totalRevenue += orderRevenue;
 //       totalCost += orderCost;
 //       totalProfit += orderProfit;
-      
+ 
 //       return {
 //         orderId: order._id,
 //         orderNumber: order.orderNumber,
@@ -470,9 +604,29 @@
 //         profitMargin: orderRevenue > 0 ? parseFloat(((orderProfit / orderRevenue) * 100).toFixed(2)) : 0
 //       };
 //     });
-    
+ 
+//     const variantBreakdown = Object.values(variantBreakdownMap).map(vb => ({
+//       variantId: vb.variantId,
+//       variantName: vb.variantName,
+//       subVariantId: vb.subVariantId,
+//       subVariantName: vb.subVariantName,
+//       image: vb.image,
+//       isVariantRow: vb.isVariantRow,
+//       isSubVariantRow: vb.isSubVariantRow,
+//       quantity: vb.quantity,
+//       revenue: parseFloat(vb.revenue.toFixed(2)),
+//       cost: parseFloat(vb.cost.toFixed(2)),
+//       profit: parseFloat(vb.profit.toFixed(2)),
+//       profitMargin: vb.revenue > 0 ? parseFloat(((vb.profit / vb.revenue) * 100).toFixed(2)) : 0
+//     })).sort((a, b) => {
+//       if (a.variantId !== b.variantId) return String(a.variantId).localeCompare(String(b.variantId));
+//       if (a.isVariantRow && !b.isVariantRow) return -1;
+//       if (!a.isVariantRow && b.isVariantRow) return 1;
+//       return 0;
+//     });
+ 
 //     const profitMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
-    
+ 
 //     res.json({
 //       success: true,
 //       data: {
@@ -483,33 +637,37 @@
 //         totalCost: parseFloat(totalCost.toFixed(2)),
 //         totalProfit: parseFloat(totalProfit.toFixed(2)),
 //         profitMargin: parseFloat(profitMargin.toFixed(2)),
+//         hasVariants,
+//         hasSubVariants,
+//         variantBreakdown,
 //         orders: orderDetails
 //       }
 //     });
-    
+ 
 //   } catch (error) {
 //     console.error('Get product profit margin error:', error);
-//     res.status(500).json({ 
-//       success: false, 
-//       error: error.message || 'Failed to get product profit margin' 
+//     res.status(500).json({
+//       success: false,
+//       error: error.message || 'Failed to get product profit margin'
 //     });
 //   }
 // };
-
+ 
 // module.exports = {
 //   getProfitMarginData,
 //   getProductProfitMargin
 // };
 
+
 const Order = require('../models/Order');
 const Product = require('../models/Product');
- 
+
 // ============================================================
 // HELPER: Get variant/sub-variant cost from product
 // ============================================================
 const getVariantCostFromProduct = (product, variantId, subVariantId) => {
   if (!product || !product.variantTypes || !variantId) return 0;
- 
+
   for (const vt of product.variantTypes) {
     for (const v of (vt.variants || [])) {
       if (v.id === variantId) {
@@ -525,7 +683,7 @@ const getVariantCostFromProduct = (product, variantId, subVariantId) => {
   }
   return 0;
 };
- 
+
 // ============================================================
 // HELPER: Get selling price for a plain (non-variant) item
 // ============================================================
@@ -533,55 +691,116 @@ const getPlainItemSellingPrice = (item) => {
   if (item.discountPrice > 0) return Number(item.discountPrice);
   return Number(item.regularPrice) || 0;
 };
- 
+
 // ============================================================
-// HELPER: Process one order item (product line) into revenue/
-// cost/profit, breaking down by variant/sub-variant when present,
-// and updating the running productProfitMap entry for it.
+// HELPER: Build delivered-quantity map from order.deliveryItems
+//
+// Returns:
+//   - null → no deliveryItems on this order; caller should fall
+//            back to raw item.quantity fields (legacy behavior)
+//   - Map<string, number> → key = productId | variantId | subVariantId
+//     value = SUM of deliveredQuantity across matching delivery items
+//
+// Key shapes:
+//   - Sub-variant:  `${productId}|${variantId}|${subVariantId}`
+//   - Variant:      `${productId}|${variantId}`
+//   - Color:        `${productId}|color:${color}`
+//   - Plain:        `${productId}|plain`
+// ============================================================
+const buildDeliveredQuantityMap = (order) => {
+  if (!order.deliveryItems || order.deliveryItems.length === 0) {
+    return null;
+  }
+
+  const map = new Map();
+
+  order.deliveryItems.forEach((di) => {
+    const deliveredQty = Number(di.deliveredQuantity) || 0;
+    if (deliveredQty <= 0) return;
+
+    const productId = di.productId?.toString() || '';
+    const variantId = di.variantId || null;
+    const subVariantId = di.subVariantId || null;
+    const selectedColor = di.selectedColor || null;
+
+    let key;
+    if (subVariantId) {
+      key = `${productId}|${variantId}|${subVariantId}`;
+    } else if (variantId) {
+      key = `${productId}|${variantId}`;
+    } else if (selectedColor) {
+      key = `${productId}|color:${selectedColor}`;
+    } else {
+      key = `${productId}|plain`;
+    }
+
+    map.set(key, (map.get(key) || 0) + deliveredQty);
+  });
+
+  return map;
+};
+
+// ============================================================
+// HELPER: Process one order item into revenue/cost/profit.
+//
+// Accepts an optional `deliveredQtyMap`:
+//   - When provided → only delivered quantities are counted
+//     (used for partial_delivery orders)
+//   - When null     → falls back to item's own quantity fields
+//     (used for fully delivered legacy orders)
 // Returns { itemRevenue, itemCost, itemProfit, itemQuantity }
 // ============================================================
-const processOrderItem = (item, productDoc, product, productImage) => {
+const processOrderItem = (item, productDoc, product, productImage, deliveredQtyMap = null) => {
   let itemRevenue = 0;
   let itemCost = 0;
   let itemProfit = 0;
   let itemQuantity = 0;
- 
+
+  const productIdStr = (productDoc?._id || item.productId)?.toString() || '';
+
   const variantDetails = item.variantDetails || [];
   const hasVariantDetails = variantDetails.length > 0;
- 
+
   if (hasVariantDetails) {
     product.hasVariants = true;
- 
+
     variantDetails.forEach(vd => {
       const variantId = vd.variantId;
       const subVariants = vd.subVariants || [];
       const hasSubVariants = subVariants.length > 0;
- 
+
       if (hasSubVariants) {
         product.hasSubVariants = true;
- 
+
         subVariants.forEach(sv => {
-          const qty = Number(sv.quantity) || 0;
+          // ✅ Resolve quantity: delivered-map or raw
+          let qty;
+          if (deliveredQtyMap) {
+            const key = `${productIdStr}|${variantId}|${sv.subVariantId}`;
+            qty = deliveredQtyMap.get(key) || 0;
+          } else {
+            qty = Number(sv.quantity) || 0;
+          }
           if (qty <= 0) return;
- 
+
           const sellingPrice = Number(sv.subVariantDiscountPrice) > 0
             ? Number(sv.subVariantDiscountPrice)
             : (Number(sv.subVariantRegularPrice) || 0);
- 
+
           let costPerItem = getVariantCostFromProduct(productDoc, variantId, sv.subVariantId);
           if (costPerItem === 0) {
             costPerItem = (productDoc?.costPerItem || productDoc?.buyingPrice || 0);
           }
- 
+
           const revenue = sellingPrice * qty;
           const cost = costPerItem * qty;
           const profit = revenue - cost;
- 
+
           itemRevenue += revenue;
           itemCost += cost;
           itemProfit += profit;
           itemQuantity += qty;
- 
+
           const key = `${variantId}_${sv.subVariantId}`;
           if (!product.variantBreakdownMap[key]) {
             product.variantBreakdownMap[key] = {
@@ -605,27 +824,34 @@ const processOrderItem = (item, productDoc, product, productImage) => {
           vb.profit += profit;
         });
       } else {
-        const qty = Number(vd.quantity) || 0;
+        // ✅ Resolve quantity: delivered-map or raw
+        let qty;
+        if (deliveredQtyMap) {
+          const key = `${productIdStr}|${variantId}`;
+          qty = deliveredQtyMap.get(key) || 0;
+        } else {
+          qty = Number(vd.quantity) || 0;
+        }
         if (qty <= 0) return;
- 
+
         const sellingPrice = Number(vd.variantDiscountPrice) > 0
           ? Number(vd.variantDiscountPrice)
           : (Number(vd.variantRegularPrice) || 0);
- 
+
         let costPerItem = getVariantCostFromProduct(productDoc, variantId, null);
         if (costPerItem === 0) {
           costPerItem = (productDoc?.costPerItem || productDoc?.buyingPrice || 0);
         }
- 
+
         const revenue = sellingPrice * qty;
         const cost = costPerItem * qty;
         const profit = revenue - cost;
- 
+
         itemRevenue += revenue;
         itemCost += cost;
         itemProfit += profit;
         itemQuantity += qty;
- 
+
         const key = variantId;
         if (!product.variantBreakdownMap[key]) {
           product.variantBreakdownMap[key] = {
@@ -652,21 +878,39 @@ const processOrderItem = (item, productDoc, product, productImage) => {
   } else {
     // ============================================================
     // Plain product line (no variants) — colors or simple quantity.
-    // Calculation stays exactly as before.
     // ============================================================
-    const qty = Number(item.quantity) || 0;
+    const selectedColor = item.selectedColor || null;
+
+    // ✅ Resolve quantity: delivered-map or raw
+    let qty;
+    if (deliveredQtyMap) {
+      let key;
+      if (selectedColor) {
+        key = `${productIdStr}|color:${selectedColor}`;
+      } else {
+        key = `${productIdStr}|plain`;
+      }
+      qty = deliveredQtyMap.get(key) || 0;
+    } else {
+      qty = Number(item.quantity) || 0;
+    }
+
+    if (qty <= 0) {
+      return { itemRevenue: 0, itemCost: 0, itemProfit: 0, itemQuantity: 0 };
+    }
+
     const sellingPrice = getPlainItemSellingPrice(item);
     const costPerItem = (productDoc?.costPerItem || productDoc?.buyingPrice) || item.costPerItem || item.buyingPrice || 0;
- 
+
     itemRevenue = sellingPrice * qty;
     itemCost = costPerItem * qty;
     itemProfit = itemRevenue - itemCost;
     itemQuantity = qty;
   }
- 
+
   return { itemRevenue, itemCost, itemProfit, itemQuantity };
 };
- 
+
 // ============================================================
 // GET PROFIT MARGIN DATA
 // @route   GET /api/orders/admin/profit-margin
@@ -676,13 +920,13 @@ const getProfitMarginData = async (req, res) => {
   try {
     const { period = 'month', startDate, endDate, limit = 100 } = req.query;
     const userRole = req.user?.role || 'admin';
- 
+
     // ============================================
     // Build date filter
     // ============================================
     let dateFilter = {};
     const now = new Date();
- 
+
     if (startDate && endDate) {
       const start = new Date(startDate);
       start.setHours(0, 0, 0, 0);
@@ -729,20 +973,21 @@ const getProfitMarginData = async (req, res) => {
           dateFilter = {};
       }
     }
- 
+
+    // ✅ Include partial_delivery orders; only count delivered units inside them
     const query = {
-      orderStatus: 'delivered',
-      paymentStatus: 'paid',
+      orderStatus: { $in: ['delivered', 'partial_delivery'] },
+      paymentStatus: { $in: ['paid', 'partial'] },
       ...dateFilter
     };
- 
+
     if (!['super_admin', 'admin', 'moderator'].includes(userRole)) {
       return res.status(403).json({
         success: false,
         error: 'Unauthorized to view profit margin data'
       });
     }
- 
+
     // ============================================
     // Fetch orders with populated product variant data
     // ============================================
@@ -750,7 +995,7 @@ const getProfitMarginData = async (req, res) => {
       .populate('items.productId', 'costPerItem buyingPrice productName variantTypes hasVariants')
       .sort({ createdAt: -1 })
       .limit(parseInt(limit));
- 
+
     if (!orders || orders.length === 0) {
       return res.json({
         success: true,
@@ -768,30 +1013,37 @@ const getProfitMarginData = async (req, res) => {
         }
       });
     }
- 
+
     // ============================================
     // AGGREGATE
     // ============================================
     let totalRevenue = 0;
     let totalCost = 0;
     let totalProfit = 0;
- 
+
     const productProfitMap = {};
     const periodMap = {};
- 
+
     const processedOrders = orders.map(order => {
       let orderRevenue = 0;
       let orderCost = 0;
       let orderProfit = 0;
       let orderQuantity = 0;
- 
+
+      // ✅ Build delivered-quantity map once per order.
+      //   For fully delivered orders this returns all quantities.
+      //   For partial_delivery orders this returns only delivered units.
+      //   For legacy orders with no deliveryItems, this returns null and
+      //   the processOrderItem helper falls back to raw item.quantity.
+      const deliveredQtyMap = buildDeliveredQuantityMap(order);
+
       const orderItems = order.items.map(item => {
         const productDoc = item.productId && typeof item.productId === 'object' ? item.productId : null;
- 
+
         const productId = productDoc?._id?.toString() || item.productId?.toString() || 'unknown';
         const productName = item.productName || 'Unknown Product';
         const productImage = item.image || '';
- 
+
         if (!productProfitMap[productId]) {
           productProfitMap[productId] = {
             productId,
@@ -808,24 +1060,24 @@ const getProfitMarginData = async (req, res) => {
             variantBreakdownMap: {}
           };
         }
- 
+
         const product = productProfitMap[productId];
- 
+
         const { itemRevenue, itemCost, itemProfit, itemQuantity } =
-          processOrderItem(item, productDoc, product, productImage);
- 
+          processOrderItem(item, productDoc, product, productImage, deliveredQtyMap);
+
         product.totalQuantity += itemQuantity;
         product.totalRevenue += itemRevenue;
         product.totalCost += itemCost;
         product.totalProfit += itemProfit;
- 
+
         orderRevenue += itemRevenue;
         orderCost += itemCost;
         orderProfit += itemProfit;
         orderQuantity += itemQuantity;
- 
+
         const itemProfitMargin = itemRevenue > 0 ? (itemProfit / itemRevenue) * 100 : 0;
- 
+
         return {
           ...item.toObject(),
           revenue: parseFloat(itemRevenue.toFixed(2)),
@@ -834,11 +1086,11 @@ const getProfitMarginData = async (req, res) => {
           profitMargin: parseFloat(itemProfitMargin.toFixed(2))
         };
       });
- 
+
       totalRevenue += orderRevenue;
       totalCost += orderCost;
       totalProfit += orderProfit;
- 
+
       // Period summary
       const dateKey = order.createdAt.toISOString().split('T')[0];
       if (!periodMap[dateKey]) {
@@ -857,7 +1109,7 @@ const getProfitMarginData = async (req, res) => {
       periodMap[dateKey].revenue += orderRevenue;
       periodMap[dateKey].cost += orderCost;
       periodMap[dateKey].profit += orderProfit;
- 
+
       return {
         ...order.toObject(),
         orderRevenue: parseFloat(orderRevenue.toFixed(2)),
@@ -867,7 +1119,7 @@ const getProfitMarginData = async (req, res) => {
         items: orderItems
       };
     });
- 
+
     // ============================================
     // Build product profit details
     // ============================================
@@ -875,7 +1127,7 @@ const getProfitMarginData = async (req, res) => {
       const profitMargin = p.totalRevenue > 0 ? (p.totalProfit / p.totalRevenue) * 100 : 0;
       const averageSellingPrice = p.totalQuantity > 0 ? p.totalRevenue / p.totalQuantity : 0;
       const averageBuyingPrice = p.totalQuantity > 0 ? p.totalCost / p.totalQuantity : 0;
- 
+
       const variantBreakdown = Object.values(p.variantBreakdownMap || {}).map(vb => ({
         variantId: vb.variantId,
         variantName: vb.variantName,
@@ -892,7 +1144,7 @@ const getProfitMarginData = async (req, res) => {
           ? parseFloat(((vb.profit / vb.revenue) * 100).toFixed(2))
           : 0
       }));
- 
+
       // Sort: group variants together, variant row before its sub-variants
       variantBreakdown.sort((a, b) => {
         if (a.variantId !== b.variantId) return String(a.variantId).localeCompare(String(b.variantId));
@@ -900,9 +1152,9 @@ const getProfitMarginData = async (req, res) => {
         if (!a.isVariantRow && b.isVariantRow) return 1;
         return 0;
       });
- 
+
       const { variantBreakdownMap, ...rest } = p;
- 
+
       return {
         ...rest,
         variantBreakdown,
@@ -914,7 +1166,7 @@ const getProfitMarginData = async (req, res) => {
         averageBuyingPrice: parseFloat(averageBuyingPrice.toFixed(2))
       };
     });
- 
+
     const periodSummary = Object.values(periodMap).map(p => {
       const profitMargin = p.revenue > 0 ? (p.profit / p.revenue) * 100 : 0;
       return {
@@ -927,9 +1179,9 @@ const getProfitMarginData = async (req, res) => {
         profitMargin: parseFloat(profitMargin.toFixed(2))
       };
     }).sort((a, b) => a.date.localeCompare(b.date));
- 
+
     const averageProfitMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
- 
+
     res.json({
       success: true,
       data: {
@@ -945,7 +1197,7 @@ const getProfitMarginData = async (req, res) => {
         orders: processedOrders
       }
     });
- 
+
   } catch (error) {
     console.error('Get profit margin error:', error);
     res.status(500).json({
@@ -954,7 +1206,7 @@ const getProfitMarginData = async (req, res) => {
     });
   }
 };
- 
+
 // ============================================================
 // GET PRODUCT PROFIT MARGIN
 // @route   GET /api/orders/admin/product-profit/:productId
@@ -964,20 +1216,20 @@ const getProductProfitMargin = async (req, res) => {
   try {
     const { productId } = req.params;
     const { period = 'month', startDate, endDate } = req.query;
- 
+
     const userRole = req.user?.role || 'admin';
- 
+
     if (!['super_admin', 'admin', 'moderator'].includes(userRole)) {
       return res.status(403).json({
         success: false,
         error: 'Unauthorized to view profit margin data'
       });
     }
- 
+
     // Date filter
     let dateFilter = {};
     const now = new Date();
- 
+
     if (startDate && endDate) {
       const start = new Date(startDate);
       start.setHours(0, 0, 0, 0);
@@ -1023,17 +1275,18 @@ const getProductProfitMargin = async (req, res) => {
           dateFilter = {};
       }
     }
- 
+
+    // ✅ Include partial_delivery orders
     const query = {
-      orderStatus: 'delivered',
-      paymentStatus: 'paid',
+      orderStatus: { $in: ['delivered', 'partial_delivery'] },
+      paymentStatus: { $in: ['paid', 'partial'] },
       'items.productId': productId,
       ...dateFilter
     };
- 
+
     const orders = await Order.find(query)
       .populate('items.productId', 'costPerItem buyingPrice productName variantTypes');
- 
+
     if (!orders || orders.length === 0) {
       return res.json({
         success: true,
@@ -1052,49 +1305,52 @@ const getProductProfitMargin = async (req, res) => {
         }
       });
     }
- 
+
     let totalQuantity = 0;
     let totalRevenue = 0;
     let totalCost = 0;
     let totalProfit = 0;
     let hasVariants = false;
     let hasSubVariants = false;
- 
+
     const variantBreakdownMap = {};
- 
+
     const orderDetails = orders.map(order => {
       let orderQuantity = 0;
       let orderRevenue = 0;
       let orderCost = 0;
       let orderProfit = 0;
- 
+
+      // ✅ Build delivered-quantity map once per order
+      const deliveredQtyMap = buildDeliveredQuantityMap(order);
+
       order.items.forEach(item => {
         const itemProductId = item.productId?._id?.toString() || item.productId?.toString();
         if (itemProductId !== productId) return;
- 
+
         const productDoc = item.productId && typeof item.productId === 'object' ? item.productId : null;
         const productImage = item.image || '';
- 
+
         // Reuse the same nested-aware calculation, but write breakdown
         // straight into variantBreakdownMap (product-scoped, not multi-product)
         const pseudoProduct = { hasVariants: false, hasSubVariants: false, variantBreakdownMap };
         const { itemRevenue, itemCost, itemProfit, itemQuantity } =
-          processOrderItem(item, productDoc, pseudoProduct, productImage);
- 
+          processOrderItem(item, productDoc, pseudoProduct, productImage, deliveredQtyMap);
+
         if (pseudoProduct.hasVariants) hasVariants = true;
         if (pseudoProduct.hasSubVariants) hasSubVariants = true;
- 
+
         orderQuantity += itemQuantity;
         orderRevenue += itemRevenue;
         orderCost += itemCost;
         orderProfit += itemProfit;
       });
- 
+
       totalQuantity += orderQuantity;
       totalRevenue += orderRevenue;
       totalCost += orderCost;
       totalProfit += orderProfit;
- 
+
       return {
         orderId: order._id,
         orderNumber: order.orderNumber,
@@ -1106,7 +1362,7 @@ const getProductProfitMargin = async (req, res) => {
         profitMargin: orderRevenue > 0 ? parseFloat(((orderProfit / orderRevenue) * 100).toFixed(2)) : 0
       };
     });
- 
+
     const variantBreakdown = Object.values(variantBreakdownMap).map(vb => ({
       variantId: vb.variantId,
       variantName: vb.variantName,
@@ -1126,9 +1382,9 @@ const getProductProfitMargin = async (req, res) => {
       if (!a.isVariantRow && b.isVariantRow) return 1;
       return 0;
     });
- 
+
     const profitMargin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
- 
+
     res.json({
       success: true,
       data: {
@@ -1145,7 +1401,7 @@ const getProductProfitMargin = async (req, res) => {
         orders: orderDetails
       }
     });
- 
+
   } catch (error) {
     console.error('Get product profit margin error:', error);
     res.status(500).json({
@@ -1154,7 +1410,7 @@ const getProductProfitMargin = async (req, res) => {
     });
   }
 };
- 
+
 module.exports = {
   getProfitMarginData,
   getProductProfitMargin

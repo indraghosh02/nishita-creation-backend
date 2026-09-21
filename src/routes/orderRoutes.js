@@ -35,6 +35,10 @@ const {
   getBulkTrackingStatuses,
     updatePartialDelivery,
   getPartialDeliveryItems,
+    getReturnedItemsOrders,
+  getReturnedItemsForOrder,
+  processReturnedItem,
+  updateReturnStatus,
 } = require('../controllers/orderController');
 const { getProfitMarginData, getProductProfitMargin } = require('../controllers/profitMarginController');
 
@@ -65,6 +69,11 @@ router.get('/:id/tracking', protect, isModeratorOrAdmin, getOrderTracking);
 // ============= PARTIAL DELIVERY ROUTES =============
 router.get('/:id/partial-delivery-items', protect, isModeratorOrAdmin, getPartialDeliveryItems);
 router.put('/:id/partial-delivery', protect, isModeratorOrAdmin, updatePartialDelivery);
+
+router.get('/returned-items/all', protect, isModeratorOrAdmin, getReturnedItemsOrders);
+router.get('/:id/returned-items', protect, isModeratorOrAdmin, getReturnedItemsForOrder);
+router.put('/:id/returned-items/process', protect, isModeratorOrAdmin, processReturnedItem);
+router.put('/:id/return-status', protect, isModeratorOrAdmin, updateReturnStatus);
 
 // ============= PROFIT MARGIN ROUTES =============
 router.get('/admin/profit-margin', protect, isModeratorOrAdmin, getProfitMarginData);

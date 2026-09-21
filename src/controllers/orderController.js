@@ -2079,20 +2079,64 @@ const updateOrderStatus = async (req, res) => {
       }
     }
 
-    // ============================================================
-    // RETURNED HANDLING (restore stock + reset payment)
+      // ============================================================
+    // RETURNED HANDLING (restore stock + reset payment + mark all items returned)
     // ============================================================
     if (orderStatus === 'returned' && order.orderStatus !== 'returned') {
       order.cancelledAt = new Date();
       order.returnedAt = new Date();
       order.rejectionReason = 'Order returned by courier';
 
-      for (const item of order.items) {
-        await Product.findByIdAndUpdate(
-          item.productId,
-          { $inc: { stockQuantity: item.quantity } }
-        );
+      // ============================================================
+      // ✅ NEW: Mark ALL delivery items as returned (full order return)
+      // ============================================================
+      if (!order.deliveryItems || order.deliveryItems.length === 0) {
+        order.initializeDeliveryItems();
       }
+
+      order.deliveryItems.forEach((di) => {
+        const ordered = di.orderedQuantity || 0;
+
+        di.deliveredQuantity = 0;
+        di.returnedQuantity = ordered;
+        di.pendingQuantity = 0;
+        di.deliveryStatus = 'returned';
+        di.markedBy = req.user?._id || null;
+        di.markedAt = new Date();
+
+        // ✅ Reset returnProcessing for full return
+        if (!di.returnProcessing) {
+          di.returnProcessing = {};
+        }
+        di.returnProcessing.returnedQuantity = ordered;
+        di.returnProcessing.damagedQuantity = 0;
+        di.returnProcessing.restockedQuantity = 0;
+        di.returnProcessing.pendingQuantity = ordered; // pending processing
+        di.returnProcessing.isFullyProcessed = ordered === 0; // false if there's anything to process
+        di.returnProcessing.note = di.returnProcessing.note || '';
+        di.returnProcessing.processedBy = null;
+        di.returnProcessing.processedAt = null;
+      });
+
+      // ============================================================
+      // Restore stock (this is done by admin later via Returned Items page
+      // when they mark restock). However, some workflows DO restore stock
+      // immediately on return. If your business restores stock immediately,
+      // keep this block; otherwise comment it out to avoid double-increment
+      // when admin also marks "Restock" on the Returned Items page.
+      //
+      // ⚠️ IMPORTANT: If you keep this, then on the Returned Items page,
+      // when admin clicks "Restock" it will increment AGAIN → double count.
+      //
+      // Recommended: comment this out and let the Returned Items page
+      // be the single source of truth for stock restoration.
+      // ============================================================
+      // for (const item of order.items) {
+      //   await Product.findByIdAndUpdate(
+      //     item.productId,
+      //     { $inc: { stockQuantity: item.quantity } }
+      //   );
+      // }
 
       // Nothing delivered → nothing to collect
       if (order.paymentMethod === 'cod') {
@@ -4349,10 +4393,232 @@ const bulkUpdateOrder = async (req, res) => {
 };
 
 // ========== UPDATE PARTIAL DELIVERY ==========
+// const updatePartialDelivery = async (req, res) => {
+//   try {
+//     const { id } = req.params;
+//     const { deliveryItems, note } = req.body;
+
+//     if (!deliveryItems || !Array.isArray(deliveryItems) || deliveryItems.length === 0) {
+//       return res.status(400).json({
+//         success: false,
+//         error: 'deliveryItems array is required'
+//       });
+//     }
+
+//     const order = await Order.findById(id);
+//     if (!order) {
+//       return res.status(404).json({ success: false, error: 'Order not found' });
+//     }
+
+//     const allowedStatuses = [
+//       'courier_assigned',
+//       'ready_to_ship',
+//       'delivered',
+//       'partial_delivery',
+//       'returned'
+//     ];
+//     if (!allowedStatuses.includes(order.orderStatus)) {
+//       return res.status(400).json({
+//         success: false,
+//         error: `Cannot update partial delivery from status "${order.orderStatus}"`
+//       });
+//     }
+
+//     // Initialize delivery items if not yet done
+//     if (!order.deliveryItems || order.deliveryItems.length === 0) {
+//       order.initializeDeliveryItems();
+//     }
+
+//     // Build a map for quick lookup
+//     const deliveryMap = new Map();
+//     order.deliveryItems.forEach((di) => {
+//       deliveryMap.set(di._id.toString(), di);
+//     });
+
+//     // Apply incoming updates
+//     for (const update of deliveryItems) {
+//       const di = deliveryMap.get(update._id?.toString());
+//       if (!di) continue;
+
+//       const delivered = Math.max(0, Number(update.deliveredQuantity) || 0);
+//       const returned = Math.max(0, Number(update.returnedQuantity) || 0);
+//       const pending = Math.max(0, Number(update.pendingQuantity) || 0);
+
+//       const total = delivered + returned + pending;
+//       if (total !== di.orderedQuantity) {
+//         return res.status(400).json({
+//           success: false,
+//           error: `For "${di.productName}${di.variantName ? ' - ' + di.variantName : ''}${di.subVariantName ? ' - ' + di.subVariantName : ''}": delivered (${delivered}) + returned (${returned}) + pending (${pending}) must equal ordered quantity (${di.orderedQuantity})`
+//         });
+//       }
+
+//       di.deliveredQuantity = delivered;
+//       di.returnedQuantity = returned;
+//       di.pendingQuantity = pending;
+//       di.note = update.note || di.note || '';
+//       di.markedBy = req.user?._id || null;
+//       di.markedAt = new Date();
+
+//       // Auto-derive per-item delivery status
+//       if (delivered === di.orderedQuantity) {
+//         di.deliveryStatus = 'delivered';
+//       } else if (returned === di.orderedQuantity) {
+//         di.deliveryStatus = 'returned';
+//       } else if (pending === di.orderedQuantity) {
+//         di.deliveryStatus = 'pending';
+//       } else {
+//         di.deliveryStatus = 'partial';
+//       }
+
+//       // ============================================================
+//       // ✅ SYNC RETURN PROCESSING
+//       // ============================================================
+//       if (!di.returnProcessing) {
+//         di.returnProcessing = {
+//           returnedQuantity: 0,
+//           damagedQuantity: 0,
+//           restockedQuantity: 0,
+//           pendingQuantity: 0,
+//           note: '',
+//           isFullyProcessed: true,
+//           processedBy: null,
+//           processedAt: null
+//         };
+//       }
+
+//       const rp = di.returnProcessing;
+//       rp.returnedQuantity = returned;
+
+//       // Clamp damaged + restocked if they now exceed the new returned quantity
+//       const existingDamaged = rp.damagedQuantity || 0;
+//       const existingRestocked = rp.restockedQuantity || 0;
+
+//       if (existingDamaged + existingRestocked > returned) {
+//         const excess = (existingDamaged + existingRestocked) - returned;
+
+//         // Reduce restocked first, then damaged
+//         if (existingRestocked >= excess) {
+//           rp.restockedQuantity = existingRestocked - excess;
+//         } else {
+//           const remainingExcess = excess - existingRestocked;
+//           rp.restockedQuantity = 0;
+//           rp.damagedQuantity = Math.max(0, existingDamaged - remainingExcess);
+//         }
+//       }
+
+//       // Recompute pending quantity
+//       rp.pendingQuantity = Math.max(
+//         0,
+//         returned - (rp.damagedQuantity || 0) - (rp.restockedQuantity || 0)
+//       );
+//       rp.isFullyProcessed = rp.pendingQuantity === 0;
+//     }
+
+//     // ============================================================
+//     // Compute overall order status from delivery items
+//     // ============================================================
+//     const oldStatus = order.orderStatus;
+//     const newStatus = order.recomputeStatusFromDeliveryItems();
+
+//     // ✅ Allow delivered → partial_delivery revert
+//     if (order.orderStatus === 'delivered' && newStatus !== 'delivered') {
+//       // Reverting from delivered — clear deliveredAt so it's accurate
+//       order.deliveredAt = null;
+//       console.log(`↩️ Order ${order.orderNumber} reverted from delivered to ${newStatus}`);
+//     }
+
+//     order.orderStatus = newStatus;
+
+//     // ============================================================
+//     // ✅ Recompute payment based on delivery state
+//     // ============================================================
+//     order.recomputePaymentFromDelivery();
+
+//     // ============================================================
+//     // Handle terminal states
+//     // ============================================================
+//     if (newStatus === 'delivered') {
+//       order.deliveredAt = new Date();
+
+//       if (order.paymentMethod === 'cod') {
+//         order.paymentStatus = 'paid';
+//         order.paidAmount = order.total;
+//         order.returnedAmount = 0;
+//         order.refundableAmount = 0;
+//         if (!order.paymentDetails) order.paymentDetails = {};
+//         order.paymentDetails.paidAt = new Date();
+//         order.paymentDetails.paidBy = 'System (Auto-updated on full delivery)';
+//       }
+//     } else if (newStatus === 'returned') {
+//       order.returnedAt = new Date();
+
+//       // Nothing delivered → nothing to pay
+//       if (order.paymentMethod === 'cod') {
+//         order.paymentStatus = 'pending';
+//         order.paidAmount = 0;
+//       }
+//     } else if (newStatus === 'partial_delivery') {
+//       // recomputePaymentFromDelivery already set 'partial' or 'pending' or 'paid'
+//     }
+
+//     // ============================================================
+//     // Status history entry
+//     // ============================================================
+//     const summary = order.deliveryItems
+//       .filter(di => di.deliveredQuantity > 0 || di.returnedQuantity > 0)
+//       .map(di => {
+//         const label = [di.productName, di.variantName, di.subVariantName].filter(Boolean).join(' / ');
+//         return `${label}: D${di.deliveredQuantity} R${di.returnedQuantity} P${di.pendingQuantity}`;
+//       })
+//       .join('; ');
+
+//     let historyNote = `Partial delivery updated. ${summary}`;
+//     if (note) historyNote += ` | Note: ${note}`;
+//     historyNote += ` | Paid: ৳${order.paidAmount.toFixed(2)}`;
+//     if (order.returnedAmount > 0) {
+//       historyNote += ` | Returned value: ৳${order.returnedAmount.toFixed(2)}`;
+//     }
+
+//     order.addStatusHistory(
+//       newStatus,
+//       historyNote,
+//       req.user?._id,
+//       req.user?.role || 'admin'
+//     );
+
+//     await order.save();
+
+//     // ============================================================
+//     // Email notification if fully delivered or returned
+//     // ============================================================
+//     if (['delivered', 'returned'].includes(newStatus) && oldStatus !== newStatus) {
+//       if (order.customerInfo?.email && order.customerInfo.email.trim() !== '') {
+//         try {
+//           const { sendOrderStatusUpdateEmail } = require('../utils/orderEmailService');
+//           await sendOrderStatusUpdateEmail(order, order.customerInfo.email, oldStatus, newStatus);
+//         } catch (e) {
+//           console.error('Email error:', e.message);
+//         }
+//       }
+//     }
+
+//     res.json({
+//       success: true,
+//       data: order,
+//       message: `Partial delivery saved. Order is now "${newStatus}". Paid: ৳${order.paidAmount.toFixed(2)}`
+//     });
+
+//   } catch (error) {
+//     console.error('Update partial delivery error:', error);
+//     res.status(500).json({ success: false, error: error.message });
+//   }
+// };
+
+// ========== UPDATE PARTIAL DELIVERY ==========
 const updatePartialDelivery = async (req, res) => {
   try {
     const { id } = req.params;
-    const { deliveryItems, note } = req.body;
+    const { deliveryItems, note, overrideStatus } = req.body;
 
     if (!deliveryItems || !Array.isArray(deliveryItems) || deliveryItems.length === 0) {
       return res.status(400).json({
@@ -4366,29 +4632,41 @@ const updatePartialDelivery = async (req, res) => {
       return res.status(404).json({ success: false, error: 'Order not found' });
     }
 
-    const allowedStatuses = [
-      'courier_assigned',
-      'ready_to_ship',
-      'delivered',
-      'partial_delivery'
-    ];
-    if (!allowedStatuses.includes(order.orderStatus)) {
-      return res.status(400).json({
-        success: false,
-        error: `Cannot update partial delivery from status "${order.orderStatus}"`
-      });
+    // ============================================================
+    // STATUS GUARD — only enforced when NOT overridden
+    // ============================================================
+    if (!overrideStatus) {
+      const allowedStatuses = [
+        'courier_assigned',
+        'ready_to_ship',
+        'delivered',
+        'partial_delivery',
+        'returned'
+      ];
+      if (!allowedStatuses.includes(order.orderStatus)) {
+        return res.status(400).json({
+          success: false,
+          error: `Cannot update partial delivery from status "${order.orderStatus}". Use the Returned Items page to override.`
+        });
+      }
     }
 
+    // ============================================================
+    // Initialize delivery items if not yet done
+    // ============================================================
     if (!order.deliveryItems || order.deliveryItems.length === 0) {
       order.initializeDeliveryItems();
     }
 
+    // Build a map for quick lookup
     const deliveryMap = new Map();
     order.deliveryItems.forEach((di) => {
       deliveryMap.set(di._id.toString(), di);
     });
 
-    // Apply updates
+    // ============================================================
+    // Apply incoming updates
+    // ============================================================
     for (const update of deliveryItems) {
       const di = deliveryMap.get(update._id?.toString());
       if (!di) continue;
@@ -4412,6 +4690,7 @@ const updatePartialDelivery = async (req, res) => {
       di.markedBy = req.user?._id || null;
       di.markedAt = new Date();
 
+      // Auto-derive per-item delivery status
       if (delivered === di.orderedQuantity) {
         di.deliveryStatus = 'delivered';
       } else if (returned === di.orderedQuantity) {
@@ -4421,24 +4700,76 @@ const updatePartialDelivery = async (req, res) => {
       } else {
         di.deliveryStatus = 'partial';
       }
+
+      // ============================================================
+      // ✅ SYNC RETURN PROCESSING
+      // ============================================================
+      if (!di.returnProcessing) {
+        di.returnProcessing = {
+          returnedQuantity: 0,
+          damagedQuantity: 0,
+          restockedQuantity: 0,
+          pendingQuantity: 0,
+          note: '',
+          isFullyProcessed: true,
+          processedBy: null,
+          processedAt: null
+        };
+      }
+
+      const rp = di.returnProcessing;
+      rp.returnedQuantity = returned;
+
+      // Clamp damaged + restocked if they now exceed the new returned quantity
+      const existingDamaged = rp.damagedQuantity || 0;
+      const existingRestocked = rp.restockedQuantity || 0;
+
+      if (existingDamaged + existingRestocked > returned) {
+        const excess = (existingDamaged + existingRestocked) - returned;
+
+        // Reduce restocked first, then damaged
+        if (existingRestocked >= excess) {
+          rp.restockedQuantity = existingRestocked - excess;
+        } else {
+          const remainingExcess = excess - existingRestocked;
+          rp.restockedQuantity = 0;
+          rp.damagedQuantity = Math.max(0, existingDamaged - remainingExcess);
+        }
+      }
+
+      // Recompute pending quantity
+      rp.pendingQuantity = Math.max(
+        0,
+        returned - (rp.damagedQuantity || 0) - (rp.restockedQuantity || 0)
+      );
+      rp.isFullyProcessed = rp.pendingQuantity === 0;
     }
 
-    // Compute overall status from delivery items
+    // ============================================================
+    // Compute overall order status from delivery items
+    // ============================================================
     const oldStatus = order.orderStatus;
     const newStatus = order.recomputeStatusFromDeliveryItems();
 
+    // ✅ Allow delivered → partial_delivery revert
     if (order.orderStatus === 'delivered' && newStatus !== 'delivered') {
       order.deliveredAt = null;
+      console.log(`↩️ Order ${order.orderNumber} reverted from delivered to ${newStatus}`);
     }
 
     order.orderStatus = newStatus;
 
-    // ✅ NEW: Recompute payment
+    // ============================================================
+    // ✅ Recompute payment based on delivery state
+    // ============================================================
     order.recomputePaymentFromDelivery();
 
-    // If fully delivered → COD auto-paid to full amount
+    // ============================================================
+    // Handle terminal states
+    // ============================================================
     if (newStatus === 'delivered') {
       order.deliveredAt = new Date();
+
       if (order.paymentMethod === 'cod') {
         order.paymentStatus = 'paid';
         order.paidAmount = order.total;
@@ -4450,16 +4781,19 @@ const updatePartialDelivery = async (req, res) => {
       }
     } else if (newStatus === 'returned') {
       order.returnedAt = new Date();
+
       // Nothing delivered → nothing to pay
       if (order.paymentMethod === 'cod') {
         order.paymentStatus = 'pending';
         order.paidAmount = 0;
       }
     } else if (newStatus === 'partial_delivery') {
-      // recomputePaymentFromDelivery already set 'partial' or 'pending' or 'paid'
+      // recomputePaymentFromDelivery already set 'partial' / 'pending' / 'paid'
     }
 
-    // Build summary for history
+    // ============================================================
+    // Status history entry
+    // ============================================================
     const summary = order.deliveryItems
       .filter(di => di.deliveredQuantity > 0 || di.returnedQuantity > 0)
       .map(di => {
@@ -4474,6 +4808,9 @@ const updatePartialDelivery = async (req, res) => {
     if (order.returnedAmount > 0) {
       historyNote += ` | Returned value: ৳${order.returnedAmount.toFixed(2)}`;
     }
+    if (overrideStatus) {
+      historyNote += ` (admin override)`;
+    }
 
     order.addStatusHistory(
       newStatus,
@@ -4484,7 +4821,9 @@ const updatePartialDelivery = async (req, res) => {
 
     await order.save();
 
-    // Email if fully delivered or returned
+    // ============================================================
+    // Email notification if fully delivered or returned
+    // ============================================================
     if (['delivered', 'returned'].includes(newStatus) && oldStatus !== newStatus) {
       if (order.customerInfo?.email && order.customerInfo.email.trim() !== '') {
         try {
@@ -4509,14 +4848,71 @@ const updatePartialDelivery = async (req, res) => {
 };
 
 // ========== GET PARTIAL DELIVERY ITEMS ==========
+// const getPartialDeliveryItems = async (req, res) => {
+//   try {
+//     const { id } = req.params;
+//     const order = await Order.findById(id);
+//     if (!order) {
+//       return res.status(404).json({ success: false, error: 'Order not found' });
+//     }
+
+//     if (!order.deliveryItems || order.deliveryItems.length === 0) {
+//       order.initializeDeliveryItems();
+//       await order.save();
+//     }
+
+//     res.json({
+//       success: true,
+//       data: {
+//         orderId: order._id,
+//         orderNumber: order.orderNumber,
+//         orderStatus: order.orderStatus,
+//         paymentStatus: order.paymentStatus,
+//         paidAmount: order.paidAmount || 0,
+//         returnedAmount: order.returnedAmount || 0,
+//         refundableAmount: order.refundableAmount || 0,
+//         total: order.total,
+//         deliveryItems: order.deliveryItems
+//       }
+//     });
+//   } catch (error) {
+//     console.error('Get partial delivery items error:', error);
+//     res.status(500).json({ success: false, error: error.message });
+//   }
+// };
+
+// ========== GET PARTIAL DELIVERY ITEMS ==========
 const getPartialDeliveryItems = async (req, res) => {
   try {
     const { id } = req.params;
+    // ✅ Query flag: set to 'true' from Returned Items page to unlock any status
+    const overrideStatus = req.query.overrideStatus === 'true';
+
     const order = await Order.findById(id);
     if (!order) {
       return res.status(404).json({ success: false, error: 'Order not found' });
     }
 
+    // ============================================================
+    // Status guard — only enforced when NOT overridden
+    // ============================================================
+    if (!overrideStatus) {
+      const allowedStatuses = [
+        'courier_assigned',
+        'ready_to_ship',
+        'delivered',
+        'partial_delivery',
+        'returned'
+      ];
+      if (!allowedStatuses.includes(order.orderStatus)) {
+        return res.status(400).json({
+          success: false,
+          error: `Cannot load partial delivery items from status "${order.orderStatus}"`
+        });
+      }
+    }
+
+    // ✅ Auto-initialize delivery items if empty (any status when overridden)
     if (!order.deliveryItems || order.deliveryItems.length === 0) {
       order.initializeDeliveryItems();
       await order.save();
@@ -4538,6 +4934,570 @@ const getPartialDeliveryItems = async (req, res) => {
     });
   } catch (error) {
     console.error('Get partial delivery items error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+// ============================================================
+// ✅ GET RETURNED ITEMS ORDERS (for Inventory > Returned Items page)
+// ============================================================
+const getReturnedItemsOrders = async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 20,
+      search,
+      returnStatus,  // 'pending' | 'processed' | 'all'
+      sort = '-updatedAt'
+    } = req.query;
+
+    // Base query: only returned / partial_delivery orders
+    const query = {
+      orderStatus: { $in: ['returned', 'partial_delivery'] }
+    };
+
+    if (search && search.trim()) {
+      const regex = new RegExp(search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      query.$or = [
+        { orderNumber: regex },
+        { 'customerInfo.fullName': regex },
+        { 'customerInfo.phone': regex },
+        { 'items.productName': regex }
+      ];
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    let sortOption = { updatedAt: -1 };
+    switch (sort) {
+      case 'updatedAt_asc': sortOption = { updatedAt: 1 }; break;
+      case 'createdAt_desc': sortOption = { createdAt: -1 }; break;
+      case 'createdAt_asc': sortOption = { createdAt: 1 }; break;
+      default: sortOption = { updatedAt: -1 };
+    }
+
+    const [orders, total] = await Promise.all([
+      Order.find(query)
+        .sort(sortOption)
+        .skip(skip)
+        .limit(parseInt(limit))
+        .select('orderNumber orderStatus paymentStatus paidAmount returnedAmount total customerInfo createdAt updatedAt deliveryItems deliveryService'),
+      Order.countDocuments(query)
+    ]);
+
+    // Build per-order return summary
+    const result = orders.map((order) => {
+      const summary = order.getReturnProcessingSummary();
+
+      // Apply returnStatus filter (post-filter)
+      return {
+        _id: order._id,
+        orderNumber: order.orderNumber,
+        orderStatus: order.orderStatus,
+        paymentStatus: order.paymentStatus,
+        paidAmount: order.paidAmount || 0,
+        returnedAmount: order.returnedAmount || 0,
+        total: order.total,
+        customerInfo: {
+          fullName: order.customerInfo?.fullName,
+          phone: order.customerInfo?.phone,
+          email: order.customerInfo?.email
+        },
+        deliveryService: order.deliveryService
+          ? {
+              courierName: order.deliveryService.courierName,
+              trackingNumber: order.deliveryService.trackingNumber,
+              deliveryStatus: order.deliveryService.deliveryStatus
+            }
+          : null,
+        createdAt: order.createdAt,
+        updatedAt: order.updatedAt,
+        returnSummary: {
+          totalReturned: summary.totalReturned,
+          totalDamaged: summary.totalDamaged,
+          totalRestocked: summary.totalRestocked,
+          totalPending: summary.totalPending,
+          isFullyProcessed: summary.isFullyProcessed,
+          itemsCount: summary.items.length
+        }
+      };
+    });
+
+    // Apply returnStatus filter
+    let filtered = result;
+    if (returnStatus === 'pending') {
+      filtered = result.filter(r => !r.returnSummary.isFullyProcessed);
+    } else if (returnStatus === 'processed') {
+      filtered = result.filter(r => r.returnSummary.isFullyProcessed);
+    }
+
+    res.json({
+      success: true,
+      data: filtered,
+      pagination: {
+        total,
+        page: parseInt(page),
+        pages: Math.ceil(total / parseInt(limit)),
+        limit: parseInt(limit)
+      }
+    });
+  } catch (error) {
+    console.error('Get returned items orders error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+// ============================================================
+// ✅ GET RETURNED ITEMS FOR A SPECIFIC ORDER
+// ============================================================
+const getReturnedItemsForOrder = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const order = await Order.findById(id);
+
+    if (!order) {
+      return res.status(404).json({ success: false, error: 'Order not found' });
+    }
+
+    if (!['returned', 'partial_delivery'].includes(order.orderStatus)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Order is not in returned or partial_delivery status'
+      });
+    }
+
+    const summary = order.getReturnProcessingSummary();
+
+    res.json({
+      success: true,
+      data: {
+        orderId: order._id,
+        orderNumber: order.orderNumber,
+        orderStatus: order.orderStatus,
+        paymentStatus: order.paymentStatus,
+        paidAmount: order.paidAmount || 0,
+        returnedAmount: order.returnedAmount || 0,
+        total: order.total,
+        customerInfo: order.customerInfo,
+        summary
+      }
+    });
+  } catch (error) {
+    console.error('Get returned items for order error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// ============================================================
+// ✅ PROCESS RETURNED ITEM — mark damaged / restocked per unit
+// Body:
+//   deliveryItemId: string (required)
+//   damagedQuantity: number (optional, delta to add)
+//   restockedQuantity: number (optional, delta to add)
+//   note: string (optional)
+// ============================================================
+const processReturnedItem = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      deliveryItemId,
+      damagedQuantity,
+      restockedQuantity,
+      note
+    } = req.body;
+
+    if (!deliveryItemId) {
+      return res.status(400).json({ success: false, error: 'deliveryItemId is required' });
+    }
+
+    const order = await Order.findById(id);
+    if (!order) {
+      return res.status(404).json({ success: false, error: 'Order not found' });
+    }
+
+    if (!['returned', 'partial_delivery'].includes(order.orderStatus)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Order is not in returned or partial_delivery status'
+      });
+    }
+
+    const di = order.deliveryItems.id(deliveryItemId);
+    if (!di) {
+      return res.status(404).json({ success: false, error: 'Delivery item not found in order' });
+    }
+
+    const returned = di.returnedQuantity || 0;
+    if (returned <= 0) {
+      return res.status(400).json({ success: false, error: 'This item has no returned quantity' });
+    }
+
+    if (!di.returnProcessing) {
+      di.returnProcessing = {};
+      di.returnProcessing.returnedQuantity = returned;
+    }
+
+    const rp = di.returnProcessing;
+
+    const addDamaged = Math.max(0, Number(damagedQuantity) || 0);
+    const addRestocked = Math.max(0, Number(restockedQuantity) || 0);
+
+    const newDamaged = (rp.damagedQuantity || 0) + addDamaged;
+    const newRestocked = (rp.restockedQuantity || 0) + addRestocked;
+
+    if (newDamaged + newRestocked > returned) {
+      return res.status(400).json({
+        success: false,
+        error: `Total damaged + restocked (${newDamaged + newRestocked}) cannot exceed returned quantity (${returned})`
+      });
+    }
+
+    // ===== Restock action: add to actual product / variant stock =====
+    if (addRestocked > 0) {
+      const product = await Product.findById(di.productId);
+      if (!product) {
+        return res.status(404).json({
+          success: false,
+          error: 'Source product not found, cannot restock'
+        });
+      }
+
+      let stockAdded = false;
+
+      // Case 1: Sub-variant (nested)
+      if (di.variantId && di.subVariantId && product.variantTypes) {
+        outer:
+        for (const vt of product.variantTypes) {
+          for (const v of vt.variants || []) {
+            if (v.id === di.variantId || v._id?.toString() === di.variantId) {
+              const sv = (v.subVariants || []).find(
+                s => s.id === di.subVariantId || s._id?.toString() === di.subVariantId
+              );
+              if (sv) {
+                sv.stockQuantity = (sv.stockQuantity || 0) + addRestocked;
+                v.stockQuantity = (v.stockQuantity || 0) + addRestocked;
+                product.stockQuantity = (product.stockQuantity || 0) + addRestocked;
+                stockAdded = true;
+                break outer;
+              }
+            }
+          }
+        }
+      }
+      // Case 2: Variant only
+      else if (di.variantId && product.variantTypes) {
+        outer2:
+        for (const vt of product.variantTypes) {
+          for (const v of vt.variants || []) {
+            if (v.id === di.variantId || v._id?.toString() === di.variantId) {
+              v.stockQuantity = (v.stockQuantity || 0) + addRestocked;
+              product.stockQuantity = (product.stockQuantity || 0) + addRestocked;
+              stockAdded = true;
+              break outer2;
+            }
+          }
+        }
+      }
+      // Case 3: Plain / color product
+      else {
+        product.stockQuantity = (product.stockQuantity || 0) + addRestocked;
+        stockAdded = true;
+      }
+
+      if (!stockAdded) {
+        // Fallback: still increment base product stock so we don't lose data
+        product.stockQuantity = (product.stockQuantity || 0) + addRestocked;
+      }
+
+      await product.save();
+    }
+
+    // ===== Update return processing =====
+    rp.damagedQuantity = newDamaged;
+    rp.restockedQuantity = newRestocked;
+    rp.pendingQuantity = Math.max(0, returned - newDamaged - newRestocked);
+    rp.isFullyProcessed = rp.pendingQuantity === 0;
+    rp.note = note !== undefined ? note : (rp.note || '');
+    rp.processedBy = req.user?._id || null;
+    rp.processedAt = new Date();
+
+    // ===== Status history =====
+    const label = [di.productName, di.variantName, di.subVariantName]
+      .filter(Boolean)
+      .join(' / ');
+
+    let noteParts = [];
+    if (addDamaged > 0) noteParts.push(`+${addDamaged} damaged`);
+    if (addRestocked > 0) noteParts.push(`+${addRestocked} restocked`);
+
+    order.addStatusHistory(
+      order.orderStatus,
+      `Return processing on "${label}": ${noteParts.join(', ')}. ` +
+      `Total → Damaged: ${rp.damagedQuantity}, Restocked: ${rp.restockedQuantity}, Pending: ${rp.pendingQuantity}`,
+      req.user?._id,
+      req.user?.role || 'admin'
+    );
+
+    await order.save();
+
+    res.json({
+      success: true,
+      data: order,
+      message: `Return item processed. Damaged: ${rp.damagedQuantity}, Restocked: ${rp.restockedQuantity}, Pending: ${rp.pendingQuantity}`
+    });
+  } catch (error) {
+    console.error('Process returned item error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// ============================================================
+// ✅ TOGGLE RETURN STATUS of an order (partial_delivery ⇄ returned)
+// ============================================================
+// const updateReturnStatus = async (req, res) => {
+//   try {
+//     const { id } = req.params;
+//     const { orderStatus } = req.body;
+
+//     if (!['partial_delivery', 'returned'].includes(orderStatus)) {
+//       return res.status(400).json({
+//         success: false,
+//         error: 'Only partial_delivery or returned status allowed here'
+//       });
+//     }
+
+//     const order = await Order.findById(id);
+//     if (!order) {
+//       return res.status(404).json({ success: false, error: 'Order not found' });
+//     }
+
+//     const oldStatus = order.orderStatus;
+
+//     if (oldStatus === orderStatus) {
+//       return res.json({
+//         success: true,
+//         data: order,
+//         message: 'No change'
+//       });
+//     }
+
+//     // Ensure delivery items exist
+//     if (!order.deliveryItems || order.deliveryItems.length === 0) {
+//       return res.status(400).json({
+//         success: false,
+//         error: 'Order has no delivery items yet. Save partial delivery first.'
+//       });
+//     }
+
+//     // ============================================================
+//     // ✅ If switching TO 'returned' from Returned Items page:
+//     //     mark ALL delivery items as fully returned.
+//     // ============================================================
+//     if (orderStatus === 'returned') {
+//       order.deliveryItems.forEach((di) => {
+//         const ordered = di.orderedQuantity || 0;
+
+//         di.deliveredQuantity = 0;
+//         di.returnedQuantity = ordered;
+//         di.pendingQuantity = 0;
+//         di.deliveryStatus = 'returned';
+
+//         if (!di.returnProcessing) di.returnProcessing = {};
+//         di.returnProcessing.returnedQuantity = ordered;
+//         // Keep damaged/restocked if they were already processed
+//         // Only set pending based on what's left
+//         const damaged = di.returnProcessing.damagedQuantity || 0;
+//         const restocked = di.returnProcessing.restockedQuantity || 0;
+//         di.returnProcessing.pendingQuantity = Math.max(0, ordered - damaged - restocked);
+//         di.returnProcessing.isFullyProcessed = di.returnProcessing.pendingQuantity === 0;
+//       });
+
+//       order.returnedAt = new Date();
+
+//       if (order.paymentMethod === 'cod') {
+//         order.paymentStatus = 'pending';
+//         order.paidAmount = 0;
+//       }
+//       order.returnedAmount = order.subtotal || 0;
+//       order.refundableAmount = order.subtotal || 0;
+//     }
+
+//     // If switching BACK to partial_delivery, leave delivery items as-is.
+//     // Admin will re-edit them via the Partial Delivery modal.
+
+//     order.orderStatus = orderStatus;
+//     order.recomputePaymentFromDelivery();
+
+//     order.addStatusHistory(
+//       orderStatus,
+//       `Return status changed from ${oldStatus} to ${orderStatus} via Returned Items page`,
+//       req.user?._id,
+//       req.user?.role || 'admin'
+//     );
+
+//     await order.save();
+
+//     res.json({
+//       success: true,
+//       data: order,
+//       message: `Order status changed to ${orderStatus}`
+//     });
+//   } catch (error) {
+//     console.error('Update return status error:', error);
+//     res.status(500).json({ success: false, error: error.message });
+//   }
+// };
+// ============================================================
+// ✅ TOGGLE RETURN STATUS of an order (partial_delivery ⇄ returned)
+// Body: { orderStatus: 'returned' | 'partial_delivery', overrideStatus?: boolean }
+// ============================================================
+const updateReturnStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { orderStatus, overrideStatus } = req.body;
+
+    if (!['partial_delivery', 'returned'].includes(orderStatus)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Only partial_delivery or returned status allowed here'
+      });
+    }
+
+    const order = await Order.findById(id);
+    if (!order) {
+      return res.status(404).json({ success: false, error: 'Order not found' });
+    }
+
+    const oldStatus = order.orderStatus;
+
+    // ✅ If already in target status → reject (prevents duplicates)
+    if (oldStatus === orderStatus) {
+      return res.status(400).json({
+        success: false,
+        error: `Order is already in "${orderStatus}" status`
+      });
+    }
+
+    // ============================================================
+    // Status guard — only enforced when NOT overridden
+    // ============================================================
+    if (!overrideStatus) {
+      // From regular Orders page: only allow statuses that make sense
+      const allowedFromStatuses = [
+        'courier_assigned',
+        'ready_to_ship',
+        'delivered',
+        'partial_delivery',
+        'returned'
+      ];
+      if (!allowedFromStatuses.includes(oldStatus)) {
+        return res.status(400).json({
+          success: false,
+          error: `Cannot convert order from "${oldStatus}" to "${orderStatus}". Only courier/delivered/partial/returned orders can be returned.`
+        });
+      }
+    }
+
+    // ✅ ALWAYS initialize delivery items if empty
+    if (!order.deliveryItems || order.deliveryItems.length === 0) {
+      order.initializeDeliveryItems();
+    }
+
+    if (!order.deliveryItems || order.deliveryItems.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Order has no items to return'
+      });
+    }
+
+    // ============================================================
+    // If switching TO 'returned' → mark ALL delivery items as fully returned
+    // ============================================================
+    if (orderStatus === 'returned') {
+      order.deliveryItems.forEach((di) => {
+        const ordered = di.orderedQuantity || 0;
+
+        di.deliveredQuantity = 0;
+        di.returnedQuantity = ordered;
+        di.pendingQuantity = 0;
+        di.deliveryStatus = 'returned';
+        di.markedBy = req.user?._id || null;
+        di.markedAt = new Date();
+
+        if (!di.returnProcessing) di.returnProcessing = {};
+        di.returnProcessing.returnedQuantity = ordered;
+
+        // Preserve existing damaged/restocked if already processed
+        const damaged = di.returnProcessing.damagedQuantity || 0;
+        const restocked = di.returnProcessing.restockedQuantity || 0;
+
+        // Clamp so damaged + restocked never exceeds returned
+        if (damaged + restocked > ordered) {
+          const excess = (damaged + restocked) - ordered;
+          if (restocked >= excess) {
+            di.returnProcessing.restockedQuantity = restocked - excess;
+          } else {
+            di.returnProcessing.restockedQuantity = 0;
+            di.returnProcessing.damagedQuantity = Math.max(0, damaged - (excess - restocked));
+          }
+        }
+
+        const finalDamaged = di.returnProcessing.damagedQuantity || 0;
+        const finalRestocked = di.returnProcessing.restockedQuantity || 0;
+
+        di.returnProcessing.pendingQuantity = Math.max(0, ordered - finalDamaged - finalRestocked);
+        di.returnProcessing.isFullyProcessed = di.returnProcessing.pendingQuantity === 0;
+      });
+
+      order.returnedAt = new Date();
+
+      // Reset payment state for a full return
+      if (order.paymentMethod === 'cod') {
+        order.paymentStatus = 'pending';
+        order.paidAmount = 0;
+      }
+      order.returnedAmount = order.subtotal || 0;
+      order.refundableAmount = order.subtotal || 0;
+    }
+
+    // ============================================================
+    // If switching TO 'partial_delivery' → just ensure returnProcessing exists
+    // Admin will edit via Partial Delivery modal
+    // ============================================================
+    if (orderStatus === 'partial_delivery') {
+      order.deliveryItems.forEach((di) => {
+        if (!di.returnProcessing) {
+          di.returnProcessing = {
+            returnedQuantity: di.returnedQuantity || 0,
+            damagedQuantity: 0,
+            restockedQuantity: 0,
+            pendingQuantity: di.returnedQuantity || 0,
+            isFullyProcessed: (di.returnedQuantity || 0) === 0
+          };
+        }
+      });
+    }
+
+    // ============================================================
+    // Apply new status + recompute payment
+    // ============================================================
+    order.orderStatus = orderStatus;
+    order.recomputePaymentFromDelivery();
+
+    order.addStatusHistory(
+      orderStatus,
+      `Return status changed from ${oldStatus} to ${orderStatus}${overrideStatus ? ' (admin override)' : ''}`,
+      req.user?._id,
+      req.user?.role || 'admin'
+    );
+
+    await order.save();
+
+    res.json({
+      success: true,
+      data: order,
+      message: `Order status changed to ${orderStatus}`
+    });
+  } catch (error) {
+    console.error('Update return status error:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 };
@@ -4572,5 +5532,9 @@ module.exports = {
   bulkUpdateOrder,
   getBulkTrackingStatuses,
   updatePartialDelivery,
-  getPartialDeliveryItems
+  getPartialDeliveryItems,
+  getReturnedItemsOrders,
+  getReturnedItemsForOrder,
+  processReturnedItem,
+  updateReturnStatus
 };
