@@ -308,412 +308,7 @@ const checkOrderRestrictions = async (req, customerInfo) => {
   }
 };
 
-// ========== CREATE ORDER - CLEAN VERSION ==========
-// const createOrder = async (req, res) => {
-//   try {
-//     const {
-//       items,
-//       subtotal,
-//       shippingCost,
-//       discount,
-//       total,
-//       paymentMethod,
-//       customerInfo,
-//       couponCode,
-//       couponDiscount,
-//       freeShipping,
-//       orderStatus = 'placed',
-//       saveOrder = true,
-//       clientDeviceInfo = {}
-//     } = req.body;
 
-//     const userId = req.user?._id;
-    
-//     let sessionId = req.headers['x-session-id'] || 
-//                     req.cookies?.sessionId || 
-//                     req.body.sessionId || 
-//                     null;
-    
-//     if (!sessionId && !userId) {
-//       sessionId = `guest_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-//       console.log('🆕 Generated new session ID for guest:', sessionId);
-//     }
-
-//     console.log('📝 Order Creation - Session Info:', {
-//       userId: userId || 'guest',
-//       sessionId: sessionId || 'none',
-//       itemsCount: items?.length || 0
-//     });
-
-//     if (!items || items.length === 0) {
-//       return res.status(400).json({ success: false, error: 'No items in order' });
-//     }
-
-//     if (!customerInfo || !customerInfo.fullName || !customerInfo.phone || !customerInfo.address || !customerInfo.division) {
-//       return res.status(400).json({ 
-//         success: false, 
-//         error: 'Customer information is incomplete. Full name, phone, address, and division are required.' 
-//       });
-//     }
-
-//     if (!paymentMethod) {
-//       return res.status(400).json({ success: false, error: 'Payment method is required' });
-//     }
-
-//     const restrictionCheck = await checkOrderRestrictions(req, customerInfo);
-    
-//     if (!restrictionCheck.allowed) {
-//       console.log('🚫 Order restricted:', {
-//         customer: customerInfo.fullName,
-//         phone: customerInfo.phone,
-//         ip: restrictionCheck.ipAddress,
-//         violations: restrictionCheck.violations
-//       });
-      
-//       return res.status(403).json({
-//         success: false,
-//         error: restrictionCheck.violations[0].message,
-//         violations: restrictionCheck.violations,
-//         restrictionType: restrictionCheck.violations[0].type
-//       });
-//     }
-
-//     // ============================================================
-//     // ✅ GROUP ITEMS BY PRODUCT WITH NESTED VARIANTS
-//     // ============================================================
-    
-//     const productGroups = {};
-    
-//     items.forEach(item => {
-//       const productId = item.productId.toString();
-      
-//       if (!productGroups[productId]) {
-//         productGroups[productId] = {
-//           productId: item.productId,
-//           productName: item.productName,
-//           productSlug: item.productSlug || '',
-//           image: item.image || '',
-//           regularPrice: item.regularPrice || 0,
-//           discountPrice: item.discountPrice || 0,
-//           unit: item.unit || 'pcs',
-//           stockQuantity: item.stockQuantity || 0,
-//           colors: [],
-//           variants: [],
-//           quantity: 0,
-//           hasVariants: false
-//         };
-//       }
-      
-//       // Add colors
-//       if (item.colors && item.colors.length > 0) {
-//         item.colors.forEach(color => {
-//           const existingColor = productGroups[productId].colors.find(c => c.color === color.color);
-//           if (existingColor) {
-//             existingColor.quantity += color.quantity;
-//           } else {
-//             productGroups[productId].colors.push({
-//               color: color.color,
-//               quantity: color.quantity,
-//               price: color.price
-//             });
-//           }
-//         });
-//       }
-      
-//       const variantId = item.variantId || null;
-//       const subVariantId = item.subVariantId || null;
-      
-//       if (variantId && variantId !== 'null' && variantId !== '') {
-//         productGroups[productId].hasVariants = true;
-        
-//         const existingVariant = productGroups[productId].variants.find(v => v.variantId === variantId);
-        
-//         let variant;
-//         if (!existingVariant) {
-//           const newVariant = {
-//             variantId: variantId,
-//             variantName: item.variantName || 'Variant',
-//             variantType: item.variantType || 'default',
-//             variantRegularPrice: item.variantRegularPrice || item.regularPrice || 0,
-//             variantDiscountPrice: item.variantDiscountPrice || item.discountPrice || 0,
-//             selectedColor: item.selectedColor || null,
-//             quantity: 0,
-//             image: item.image || '',
-//             subVariants: []
-//           };
-//           productGroups[productId].variants.push(newVariant);
-//           variant = newVariant;
-//         } else {
-//           variant = existingVariant;
-//         }
-        
-//         if (subVariantId && subVariantId !== 'null' && subVariantId !== '') {
-//           const existingSubVariant = variant.subVariants.find(sv => sv.subVariantId === subVariantId);
-          
-//           if (existingSubVariant) {
-//             existingSubVariant.quantity += item.quantity || 0;
-//           } else {
-//             variant.subVariants.push({
-//               subVariantId: subVariantId,
-//               subVariantName: item.subVariantName || 'Sub-Variant',
-//               subVariantRegularPrice: item.variantRegularPrice || item.regularPrice || 0,
-//               subVariantDiscountPrice: item.variantDiscountPrice || item.discountPrice || 0,
-//               selectedColor: item.selectedColor || null,
-//               quantity: item.quantity || 0,
-//               image: item.image || ''
-//             });
-//           }
-//         } else {
-//           variant.quantity += item.quantity || 0;
-//           if (item.selectedColor) {
-//             variant.selectedColor = item.selectedColor;
-//           }
-//           if (item.image) {
-//             variant.image = item.image;
-//           }
-//         }
-//       } else {
-//         productGroups[productId].quantity += item.quantity || 0;
-//       }
-//     });
-
-//     // Convert to final items array with clean nested structure
-//     const processedItems = Object.values(productGroups).map(group => {
-//       // Calculate total quantity
-//       let totalQuantity = group.quantity || 0;
-      
-//       group.variants.forEach(variant => {
-//         if (variant.subVariants && variant.subVariants.length > 0) {
-//           variant.subVariants.forEach(sub => {
-//             totalQuantity += sub.quantity || 0;
-//           });
-//         } else {
-//           totalQuantity += variant.quantity || 0;
-//         }
-//       });
-      
-//       if (group.colors && group.colors.length > 0) {
-//         const colorTotal = group.colors.reduce((sum, c) => sum + (c.quantity || 0), 0);
-//         if (colorTotal > 0) {
-//           totalQuantity = colorTotal;
-//         }
-//       }
-      
-//       const hasVariants = group.hasVariants || group.variants.length > 0;
-      
-//       // Build the item with clean structure
-//       return {
-//         productId: group.productId,
-//         productName: group.productName,
-//         productSlug: group.productSlug || '',
-//         image: group.image || '',
-//         regularPrice: group.regularPrice || 0,
-//         discountPrice: group.discountPrice || 0,
-//         costPerItem: 0,
-//         buyingPrice: 0,
-//         quantity: totalQuantity || 1,
-//         stockQuantity: group.stockQuantity || 0,
-//         unit: group.unit || 'pcs',
-//         selectedColor: null,
-//         colors: group.colors || [],
-//         // ✅ Nested variant structure
-//         variantDetails: group.variants.map(variant => ({
-//           variantId: variant.variantId,
-//           variantName: variant.variantName,
-//           variantType: variant.variantType,
-//           variantRegularPrice: variant.variantRegularPrice,
-//           variantDiscountPrice: variant.variantDiscountPrice,
-//           selectedColor: variant.selectedColor,
-//           quantity: variant.quantity,
-//           image: variant.image,
-//           subVariants: (variant.subVariants || []).map(sub => ({
-//             subVariantId: sub.subVariantId,
-//             subVariantName: sub.subVariantName,
-//             subVariantRegularPrice: sub.subVariantRegularPrice,
-//             subVariantDiscountPrice: sub.subVariantDiscountPrice,
-//             selectedColor: sub.selectedColor,
-//             quantity: sub.quantity,
-//             image: sub.image
-//           }))
-//         }))
-//       };
-//     });
-
-//     // Fetch product costs and validate
-//     const processedItemsWithCost = await Promise.all(processedItems.map(async (item) => {
-//       const product = await Product.findById(item.productId);
-//       const costPerItem = product?.costPerItem || product?.buyingPrice || 0;
-      
-//       // Validate stock
-//       if (product && product.stockQuantity < item.quantity) {
-//         throw new Error(`Insufficient stock for ${product.productName}. Available: ${product.stockQuantity}`);
-//       }
-      
-//       return {
-//         ...item,
-//         costPerItem: costPerItem,
-//         buyingPrice: costPerItem
-//       };
-//     }));
-
-//     // Log final items for debugging
-//     console.log('📦 Final Items:', processedItemsWithCost.map(item => ({
-//       productName: item.productName,
-//       quantity: item.quantity,
-//       variantCount: item.variantDetails?.length || 0,
-//       totalSubVariants: item.variantDetails?.reduce((sum, v) => sum + (v.subVariants?.length || 0), 0) || 0
-//     })));
-
-//     const clientInfo = getClientDeviceInfoFromBody(req);
-//     const deviceInfo = getAccurateDeviceInfo(req, clientInfo);
-
-//     // For online payment, prepare order data without saving
-//     if (paymentMethod === 'online' && !saveOrder) {
-//       const orderData = {
-//         userId: userId || null,
-//         sessionId: userId ? null : sessionId,
-//         items: processedItemsWithCost,
-//         customerInfo: {
-//           fullName: customerInfo.fullName,
-//           email: customerInfo.email || '',
-//           phone: customerInfo.phone,
-//           division: customerInfo.division,
-//           address: customerInfo.address,
-//           city: customerInfo.city,
-//           zone: customerInfo.zone,
-//           area: customerInfo.area || '',
-//           zipCode: customerInfo.zipCode || '',
-//           country: customerInfo.country || 'Bangladesh',
-//           note: customerInfo.note || ''
-//         },
-//         subtotal,
-//         shippingCost,
-//         discount: discount || 0,
-//         total,
-//         paymentMethod,
-//         paymentStatus: 'pending',
-//         orderStatus: 'placed',
-//         couponCode: couponCode || null,
-//         couponDiscount: couponDiscount || 0,
-//         freeShipping: freeShipping || false,
-//         orderDate: new Date(),
-//         deviceInfo: deviceInfo,
-//         restrictionViolation: 'none'
-//       };
-      
-//       return res.status(200).json({
-//         success: true,
-//         data: orderData,
-//         message: 'Order data prepared',
-//         sessionId: sessionId
-//       });
-//     }
-
-//     // Create and save the order
-//     const order = new Order({
-//       userId: userId || null,
-//       sessionId: userId ? null : sessionId,
-//       items: processedItemsWithCost,
-//       customerInfo: {
-//         fullName: customerInfo.fullName,
-//         email: customerInfo.email || '',
-//         phone: customerInfo.phone,
-//         division: customerInfo.division,
-//         address: customerInfo.address,
-//         city: customerInfo.city,
-//         zone: customerInfo.zone,
-//         area: customerInfo.area || '',
-//         zipCode: customerInfo.zipCode || '',
-//         country: customerInfo.country || 'Bangladesh',
-//         note: customerInfo.note || ''
-//       },
-//       subtotal,
-//       shippingCost,
-//       discount: discount || 0,
-//       total,
-//       paymentMethod,
-//       paymentStatus: paymentMethod === 'cod' ? 'pending' : 'pending',
-//       orderStatus: orderStatus === 'pending' ? 'placed' : orderStatus,
-//       couponCode: couponCode || null,
-//       couponDiscount: couponDiscount || 0,
-//       freeShipping: freeShipping || false,
-//       orderDate: new Date(),
-//       placedAt: new Date(),
-//       deviceInfo: deviceInfo,
-//       restrictionViolation: 'none'
-//     });
-
-//     await order.save();
-
-//     console.log('✅ Order saved with orderNumber:', order.orderNumber);
-
-//     // Update stock
-//     for (const item of processedItemsWithCost) {
-//       await Product.findByIdAndUpdate(
-//         item.productId,
-//         { $inc: { stockQuantity: -item.quantity, purchaseCount: item.quantity } }
-//       );
-//     }
-
-//     // Clear cart
-//     if (userId) {
-//       await Cart.findOneAndDelete({ userId });
-//       console.log('🗑️ Cart cleared for user:', userId);
-//     } else if (sessionId) {
-//       const deletedCart = await Cart.findOneAndDelete({ sessionId });
-//       console.log('🗑️ Cart cleared for session:', sessionId, deletedCart ? '✅' : '❌ Not found');
-//     }
-
-//     // Handle coupon
-//     if (couponCode) {
-//       try {
-//         const coupon = await Coupon.findOne({ couponCode: couponCode.toUpperCase() });
-//         if (coupon) {
-//           coupon.totalUsedCount = (coupon.totalUsedCount || 0) + 1;
-//           coupon.usageRecords = coupon.usageRecords || [];
-//           coupon.usageRecords.push({
-//             userId: userId || null,
-//             orderId: order._id,
-//             usedAt: new Date(),
-//             discountAmount: couponDiscount || discount
-//           });
-//           await coupon.save();
-//         }
-//       } catch (couponError) {
-//         console.error('Error recording coupon usage:', couponError);
-//       }
-//     }
-
-//     // Send emails
-//     if (order.customerInfo.email && order.customerInfo.email.trim() !== '') {
-//       try {
-//         await sendOrderPlacedEmail(order, order.customerInfo.email);
-//         console.log('✅ Order placed email sent to customer:', order.customerInfo.email);
-//       } catch (emailError) {
-//         console.error('❌ Customer email error:', emailError.message);
-//       }
-//     }
-
-//     try {
-//       await sendOrderNotificationToAdmin(order, 'new');
-//       console.log('✅ Admin notification sent for order:', order.orderNumber);
-//     } catch (emailError) {
-//       console.error('❌ Admin email error:', emailError.message);
-//     }
-
-//     res.status(201).json({
-//       success: true,
-//       data: order,
-//       orderId: order._id,
-//       sessionId: sessionId,
-//       message: 'Order placed successfully'
-//     });
-
-//   } catch (error) {
-//     console.error('Create order error:', error);
-//     res.status(500).json({ success: false, error: error.message });
-//   }
-// };
 // ========== CREATE ORDER - CLEAN VERSION (FIXED IMAGES) ==========
 const createOrder = async (req, res) => {
   try {
@@ -730,6 +325,7 @@ const createOrder = async (req, res) => {
       freeShipping,
       orderStatus = 'placed',
       saveOrder = true,
+      orderPlatform = 'website',
       clientDeviceInfo = {}
     } = req.body;
 
@@ -1089,6 +685,7 @@ const createOrder = async (req, res) => {
         paymentMethod,
         paymentStatus: 'pending',
         orderStatus: 'placed',
+         orderPlatform: orderPlatform || 'website',
         couponCode: couponCode || null,
         couponDiscount: couponDiscount || 0,
         freeShipping: freeShipping || false,
@@ -1130,6 +727,7 @@ const createOrder = async (req, res) => {
       paymentMethod,
       paymentStatus: paymentMethod === 'cod' ? 'pending' : 'pending',
       orderStatus: orderStatus === 'pending' ? 'placed' : orderStatus,
+      orderPlatform: orderPlatform || 'website', 
       couponCode: couponCode || null,
       couponDiscount: couponDiscount || 0,
       freeShipping: freeShipping || false,
@@ -2033,46 +1631,337 @@ const getUserOrders = async (req, res) => {
   }
 };
 
+// // ========== UPDATE ORDER STATUS ==========
+// const updateOrderStatus = async (req, res) => {
+//   try {
+//     const { id } = req.params;
+//     const { 
+//       orderStatus, 
+//       trackingNumber, 
+//       deliveryNote, 
+//       cancellationReason, 
+//       rejectionReason,
+//       courierService 
+//     } = req.body;
+    
+//     const order = await Order.findById(id);
+    
+//     if (!order) {
+//       return res.status(404).json({ success: false, error: 'Order not found' });
+//     }
+    
+//     if (order.orderStatus === 'cancelled') {
+//       return res.status(400).json({ 
+//         success: false, 
+//         error: 'Order is cancelled. No further actions can be performed.' 
+//       });
+//     }
+    
+//     if (order.orderStatus === 'delivered') {
+//       return res.status(400).json({ 
+//         success: false, 
+//         error: 'Order is already delivered. Status cannot be changed.' 
+//       });
+//     }
+    
+//     if (order.orderStatus === 'returned') {
+//       return res.status(400).json({ 
+//         success: false, 
+//         error: 'Order is already returned. Status cannot be changed.' 
+//       });
+//     }
+    
+//     const allowedTransitions = {
+//       'placed': ['follow_up', 'approved', 'hold', 'processing', 'cancelled'],
+//       'follow_up': ['accepted', 'rejected', 'cancelled', 'reminder'],
+//       'reminder': ['accepted', 'rejected', 'cancelled'],
+//       'accepted': ['approved', 'processing', 'hold', 'cancelled'],
+//       'approved': ['processing', 'hold', 'cancelled', 'courier_assigned'],
+//       'hold': ['approved', 'processing', 'cancelled', 'courier_assigned'],
+//       'processing': ['hold', 'cancelled', 'courier_assigned'],
+//       'courier_assigned': ['ready_to_ship', 'partial_delivery', 'delivered', 'returned', 'cancelled'],
+//       'partial_delivery': ['delivered', 'returned', 'cancelled', 'partial_delivery'],
+//       'ready_to_ship': ['delivered', 'partial_delivery', 'returned', 'cancelled'],
+//       'rejected': ['cancelled'],
+//       'shipped': [],
+//       'out_for_delivery': [],
+//        'delivered': ['partial_delivery'], // ✅ NEW: allow reverting to partial
+//   'returned': ['partial_delivery'],
+//       'delivered': [],
+//       'returned': [],
+//       'cancelled': []
+//     };
+    
+//     const currentStatus = order.orderStatus;
+//     const newStatus = orderStatus;
+//     const userRole = req.user?.role || 'admin';
+    
+//     if (currentStatus !== newStatus) {
+//       const allowedNext = allowedTransitions[currentStatus] || [];
+//       if (!allowedNext.includes(newStatus)) {
+//         return res.status(400).json({ 
+//           success: false, 
+//           error: `Invalid status transition from "${currentStatus}" to "${newStatus}". Allowed: ${allowedNext.join(', ')}` 
+//         });
+//       }
+//     }
+    
+//     const oldStatus = order.orderStatus;
+
+//       if (orderStatus === 'partial_delivery') {
+//       if (!order.deliveryItems || order.deliveryItems.length === 0) {
+//         order.initializeDeliveryItems();
+//       }
+//     }
+
+//     // ============================================================
+//     // ✅ BLOCK 2: Reverting from 'delivered' to any other status
+//     // ============================================================
+//     if (oldStatus === 'delivered' && orderStatus !== 'delivered') {
+//       order.deliveredAt = null;
+//       console.log(`↩️ Order ${order.orderNumber} reverted from delivered to ${orderStatus}`);
+
+//       // Optional: revert COD payment back to pending
+//       // Uncomment if your business rule requires it
+//       // if (order.paymentMethod === 'cod' && order.paymentStatus === 'paid') {
+//       //   order.paymentStatus = 'pending';
+//       //   if (order.paymentDetails) {
+//       //     order.paymentDetails.paidAt = null;
+//       //     order.paymentDetails.paidBy = null;
+//       //   }
+//       // }
+//     }
+    
+//     if (orderStatus === 'cancelled' && order.orderStatus !== 'cancelled') {
+//       order.cancelledAt = new Date();
+//       if (cancellationReason) {
+//         order.cancellationReason = cancellationReason;
+//       }
+      
+//       for (const item of order.items) {
+//         await Product.findByIdAndUpdate(
+//           item.productId,
+//           { $inc: { stockQuantity: item.quantity } }
+//         );
+//       }
+//     }
+    
+//     if (orderStatus === 'rejected' && order.orderStatus !== 'rejected') {
+//       order.cancelledAt = new Date();
+//       if (rejectionReason) {
+//         order.rejectionReason = rejectionReason;
+//       }
+      
+//       for (const item of order.items) {
+//         await Product.findByIdAndUpdate(
+//           item.productId,
+//           { $inc: { stockQuantity: item.quantity } }
+//         );
+//       }
+//     }
+    
+//     if (orderStatus === 'delivered' && order.orderStatus !== 'delivered') {
+//       order.deliveredAt = new Date();
+      
+//       if (order.paymentMethod === 'cod' && order.paymentStatus !== 'paid') {
+//         order.paymentStatus = 'paid';
+//         console.log(`✅ COD order ${order.orderNumber} - Payment auto-updated to Paid on delivery`);
+        
+//         if (!order.paymentDetails) {
+//           order.paymentDetails = {};
+//         }
+//         order.paymentDetails.paidAt = new Date();
+//         order.paymentDetails.paidBy = 'System (Auto-updated on delivery by admin)';
+//       }
+//     }
+    
+//     if (orderStatus === 'returned' && order.orderStatus !== 'returned') {
+//       order.cancelledAt = new Date();
+//       order.rejectionReason = 'Order returned by courier';
+      
+//       for (const item of order.items) {
+//         await Product.findByIdAndUpdate(
+//           item.productId,
+//           { $inc: { stockQuantity: item.quantity } }
+//         );
+//       }
+//     }
+    
+//     if (orderStatus === 'courier_assigned' && courierService) {
+//       order.setDeliveryService({
+//         courierName: courierService,
+//         courierSlug: courierService.toLowerCase(),
+//         deliveryStatus: 'processing',
+//         trackingNumber: trackingNumber || null
+//       });
+//     }
+    
+//     if (orderStatus) order.orderStatus = orderStatus;
+//     if (trackingNumber !== undefined) order.trackingNumber = trackingNumber;
+//     if (deliveryNote !== undefined) order.deliveryNote = deliveryNote;
+    
+//     const timestampMap = {
+//       'placed': 'placedAt',
+//       'follow_up': 'followUpAt',
+//       'accepted': 'acceptedAt',
+//       'approved': 'approvedAt',
+//       'hold': 'approvedAt',
+//       'ready_to_ship': 'shippedAt',
+//       'courier_assigned': 'shippedAt',
+//       'rejected': 'cancelledAt',
+//       'cancelled': 'cancelledAt',
+//       'reminder': 'reminderAt',
+//       'delivered': 'deliveredAt',
+//       'returned': 'cancelledAt',
+//       'partial_delivery': 'deliveredAt'
+//     };
+    
+//     if (timestampMap[orderStatus]) {
+//       order[timestampMap[orderStatus]] = new Date();
+//     }
+    
+//     const userId = req.user?._id;
+//     let userRoleMapped = userRole;
+    
+//     if (userRoleMapped === 'call_center_agent') {
+//       userRoleMapped = 'call_center';
+//     }
+//     if (userRoleMapped === 'customer') {
+//       userRoleMapped = 'user';
+//     }
+    
+//     let statusNote = `Status updated from ${oldStatus} to ${orderStatus}`;
+    
+//     if (orderStatus === 'cancelled' && cancellationReason) {
+//       statusNote = `Cancelled: ${cancellationReason}`;
+//     }
+    
+//     if (orderStatus === 'rejected' && rejectionReason) {
+//       statusNote = `Rejected: ${rejectionReason}`;
+//     }
+    
+//     if (orderStatus === 'delivered') {
+//       statusNote = 'Order delivered successfully';
+//       if (order.paymentMethod === 'cod' && order.paymentStatus === 'paid') {
+//         statusNote += ' - Payment auto-updated to Paid';
+//       }
+//     }
+    
+//     if (orderStatus === 'returned') {
+//       statusNote = 'Order returned by courier';
+//     }
+    
+//     if (orderStatus === 'courier_assigned') {
+//       statusNote = `Order assigned to ${courierService || 'courier'}`;
+//     }
+    
+//     if (orderStatus === 'follow_up') {
+//       statusNote = 'Order sent to call center for follow up';
+//     }
+    
+//     if (orderStatus === 'accepted') {
+//       statusNote = 'Order accepted';
+//     }
+    
+//     if (orderStatus === 'approved') {
+//       statusNote = 'Order approved';
+//     }
+    
+//     if (orderStatus === 'ready_to_ship') {
+//       statusNote = 'Order ready to ship';
+//     }
+    
+//     if (orderStatus === 'reminder') {
+//       statusNote = 'Reminder sent to customer';
+//     }
+    
+//     order.addStatusHistory(orderStatus, statusNote, userId, userRoleMapped);
+    
+//     await order.save();
+    
+//     const shouldSendEmail = ['cancelled', 'delivered'].includes(orderStatus);
+    
+//     if (shouldSendEmail) {
+//       if (order.customerInfo.email && order.customerInfo.email.trim() !== '') {
+//         try {
+//           await sendOrderStatusUpdateEmail(order, order.customerInfo.email, oldStatus, orderStatus);
+//           console.log(`✅ Status update email sent to customer for ${orderStatus} - Order: ${order.orderNumber}`);
+//         } catch (emailError) {
+//           console.error('❌ Customer email error:', emailError.message);
+//         }
+//       }
+
+//       try {
+//         await sendOrderNotificationToAdmin(order, 'status_update');
+//         console.log(`✅ Admin notification sent for ${orderStatus} - Order: ${order.orderNumber}`);
+//       } catch (emailError) {
+//         console.error('❌ Admin notification error:', emailError.message);
+//       }
+//     } else {
+//       console.log(`📧 Skipping email for status: ${orderStatus} (Order: ${order.orderNumber})`);
+//     }
+    
+//     let responseMessage = `Order status updated to ${orderStatus}`;
+//     if (orderStatus === 'delivered' && order.paymentMethod === 'cod' && order.paymentStatus === 'paid') {
+//       responseMessage = `Order delivered and payment marked as Paid`;
+//     }
+    
+//     res.json({
+//       success: true,
+//       data: order,
+//       message: responseMessage
+//     });
+    
+//   } catch (error) {
+//     console.error('Update order status error:', error);
+//     res.status(500).json({ success: false, error: error.message });
+//   }
+// };
+
 // ========== UPDATE ORDER STATUS ==========
 const updateOrderStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { 
-      orderStatus, 
-      trackingNumber, 
-      deliveryNote, 
-      cancellationReason, 
+    const {
+      orderStatus,
+      trackingNumber,
+      deliveryNote,
+      cancellationReason,
       rejectionReason,
-      courierService 
+      courierService
     } = req.body;
-    
+
     const order = await Order.findById(id);
-    
+
     if (!order) {
       return res.status(404).json({ success: false, error: 'Order not found' });
     }
-    
+
     if (order.orderStatus === 'cancelled') {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Order is cancelled. No further actions can be performed.' 
+      return res.status(400).json({
+        success: false,
+        error: 'Order is cancelled. No further actions can be performed.'
       });
     }
-    
-    if (order.orderStatus === 'delivered') {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Order is already delivered. Status cannot be changed.' 
+
+    // ✅ Allow 'delivered' → 'partial_delivery' revert only
+    if (order.orderStatus === 'delivered' && orderStatus !== 'partial_delivery') {
+      return res.status(400).json({
+        success: false,
+        error: 'Order is already delivered. Only partial_delivery revert is allowed.'
       });
     }
-    
+
     if (order.orderStatus === 'returned') {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Order is already returned. Status cannot be changed.' 
+      return res.status(400).json({
+        success: false,
+        error: 'Order is already returned. Status cannot be changed.'
       });
     }
-    
+
+    // ============================================================
+    // ALLOWED TRANSITIONS MAP
+    // ============================================================
     const allowedTransitions = {
       'placed': ['follow_up', 'approved', 'hold', 'processing', 'cancelled'],
       'follow_up': ['accepted', 'rejected', 'cancelled', 'reminder'],
@@ -2082,38 +1971,68 @@ const updateOrderStatus = async (req, res) => {
       'hold': ['approved', 'processing', 'cancelled', 'courier_assigned'],
       'processing': ['hold', 'cancelled', 'courier_assigned'],
       'courier_assigned': ['ready_to_ship', 'partial_delivery', 'delivered', 'returned', 'cancelled'],
-      'partial_delivery': ['delivered', 'returned', 'cancelled'],
+      'partial_delivery': ['delivered', 'returned', 'cancelled', 'partial_delivery'],
       'ready_to_ship': ['delivered', 'partial_delivery', 'returned', 'cancelled'],
       'rejected': ['cancelled'],
       'shipped': [],
       'out_for_delivery': [],
-      'delivered': [],
+      'delivered': ['partial_delivery'], // ✅ revert allowed
       'returned': [],
       'cancelled': []
     };
-    
+
     const currentStatus = order.orderStatus;
     const newStatus = orderStatus;
     const userRole = req.user?.role || 'admin';
-    
+
     if (currentStatus !== newStatus) {
       const allowedNext = allowedTransitions[currentStatus] || [];
       if (!allowedNext.includes(newStatus)) {
-        return res.status(400).json({ 
-          success: false, 
-          error: `Invalid status transition from "${currentStatus}" to "${newStatus}". Allowed: ${allowedNext.join(', ')}` 
+        return res.status(400).json({
+          success: false,
+          error: `Invalid status transition from "${currentStatus}" to "${newStatus}". Allowed: ${allowedNext.join(', ')}`
         });
       }
     }
-    
+
     const oldStatus = order.orderStatus;
-    
+
+    // ============================================================
+    // ✅ BLOCK 1: Initialize deliveryItems when moving to partial_delivery
+    // ============================================================
+    if (orderStatus === 'partial_delivery') {
+      if (!order.deliveryItems || order.deliveryItems.length === 0) {
+        order.initializeDeliveryItems();
+      }
+    }
+
+    // ============================================================
+    // ✅ BLOCK 2: Reverting from 'delivered' to any other status
+    // ============================================================
+    if (oldStatus === 'delivered' && orderStatus !== 'delivered') {
+      order.deliveredAt = null;
+      console.log(`↩️ Order ${order.orderNumber} reverted from delivered to ${orderStatus}`);
+
+      // Revert COD payment since delivery is no longer complete
+      if (order.paymentMethod === 'cod' && order.paymentStatus === 'paid') {
+        order.paymentStatus = 'pending';
+        order.paidAmount = 0;
+        if (order.paymentDetails) {
+          order.paymentDetails.paidAt = null;
+          order.paymentDetails.paidBy = null;
+        }
+      }
+    }
+
+    // ============================================================
+    // CANCELLED HANDLING (restore stock)
+    // ============================================================
     if (orderStatus === 'cancelled' && order.orderStatus !== 'cancelled') {
       order.cancelledAt = new Date();
       if (cancellationReason) {
         order.cancellationReason = cancellationReason;
       }
-      
+
       for (const item of order.items) {
         await Product.findByIdAndUpdate(
           item.productId,
@@ -2121,13 +2040,16 @@ const updateOrderStatus = async (req, res) => {
         );
       }
     }
-    
+
+    // ============================================================
+    // REJECTED HANDLING (restore stock)
+    // ============================================================
     if (orderStatus === 'rejected' && order.orderStatus !== 'rejected') {
       order.cancelledAt = new Date();
       if (rejectionReason) {
         order.rejectionReason = rejectionReason;
       }
-      
+
       for (const item of order.items) {
         await Product.findByIdAndUpdate(
           item.productId,
@@ -2135,14 +2057,20 @@ const updateOrderStatus = async (req, res) => {
         );
       }
     }
-    
+
+    // ============================================================
+    // DELIVERED HANDLING (auto-pay COD + set paidAmount)
+    // ============================================================
     if (orderStatus === 'delivered' && order.orderStatus !== 'delivered') {
       order.deliveredAt = new Date();
-      
+
       if (order.paymentMethod === 'cod' && order.paymentStatus !== 'paid') {
         order.paymentStatus = 'paid';
+        order.paidAmount = order.total;
+        order.returnedAmount = 0;
+        order.refundableAmount = 0;
         console.log(`✅ COD order ${order.orderNumber} - Payment auto-updated to Paid on delivery`);
-        
+
         if (!order.paymentDetails) {
           order.paymentDetails = {};
         }
@@ -2150,19 +2078,34 @@ const updateOrderStatus = async (req, res) => {
         order.paymentDetails.paidBy = 'System (Auto-updated on delivery by admin)';
       }
     }
-    
+
+    // ============================================================
+    // RETURNED HANDLING (restore stock + reset payment)
+    // ============================================================
     if (orderStatus === 'returned' && order.orderStatus !== 'returned') {
       order.cancelledAt = new Date();
+      order.returnedAt = new Date();
       order.rejectionReason = 'Order returned by courier';
-      
+
       for (const item of order.items) {
         await Product.findByIdAndUpdate(
           item.productId,
           { $inc: { stockQuantity: item.quantity } }
         );
       }
+
+      // Nothing delivered → nothing to collect
+      if (order.paymentMethod === 'cod') {
+        order.paymentStatus = 'pending';
+        order.paidAmount = 0;
+      }
+      order.returnedAmount = order.subtotal || 0;
+      order.refundableAmount = order.subtotal || 0;
     }
-    
+
+    // ============================================================
+    // COURIER ASSIGNED HANDLING
+    // ============================================================
     if (orderStatus === 'courier_assigned' && courierService) {
       order.setDeliveryService({
         courierName: courierService,
@@ -2171,11 +2114,17 @@ const updateOrderStatus = async (req, res) => {
         trackingNumber: trackingNumber || null
       });
     }
-    
+
+    // ============================================================
+    // APPLY STATUS / TRACKING / NOTE
+    // ============================================================
     if (orderStatus) order.orderStatus = orderStatus;
     if (trackingNumber !== undefined) order.trackingNumber = trackingNumber;
     if (deliveryNote !== undefined) order.deliveryNote = deliveryNote;
-    
+
+    // ============================================================
+    // TIMESTAMP MAP
+    // ============================================================
     const timestampMap = {
       'placed': 'placedAt',
       'follow_up': 'followUpAt',
@@ -2188,75 +2137,81 @@ const updateOrderStatus = async (req, res) => {
       'cancelled': 'cancelledAt',
       'reminder': 'reminderAt',
       'delivered': 'deliveredAt',
-      'returned': 'cancelledAt',
+      'returned': 'returnedAt',
       'partial_delivery': 'deliveredAt'
     };
-    
+
     if (timestampMap[orderStatus]) {
       order[timestampMap[orderStatus]] = new Date();
     }
-    
+
+    // ============================================================
+    // STATUS HISTORY NOTE
+    // ============================================================
     const userId = req.user?._id;
     let userRoleMapped = userRole;
-    
+
     if (userRoleMapped === 'call_center_agent') {
       userRoleMapped = 'call_center';
     }
     if (userRoleMapped === 'customer') {
       userRoleMapped = 'user';
     }
-    
+
     let statusNote = `Status updated from ${oldStatus} to ${orderStatus}`;
-    
+
     if (orderStatus === 'cancelled' && cancellationReason) {
       statusNote = `Cancelled: ${cancellationReason}`;
     }
-    
     if (orderStatus === 'rejected' && rejectionReason) {
       statusNote = `Rejected: ${rejectionReason}`;
     }
-    
     if (orderStatus === 'delivered') {
       statusNote = 'Order delivered successfully';
       if (order.paymentMethod === 'cod' && order.paymentStatus === 'paid') {
         statusNote += ' - Payment auto-updated to Paid';
       }
     }
-    
     if (orderStatus === 'returned') {
       statusNote = 'Order returned by courier';
     }
-    
     if (orderStatus === 'courier_assigned') {
       statusNote = `Order assigned to ${courierService || 'courier'}`;
     }
-    
     if (orderStatus === 'follow_up') {
       statusNote = 'Order sent to call center for follow up';
     }
-    
     if (orderStatus === 'accepted') {
       statusNote = 'Order accepted';
     }
-    
     if (orderStatus === 'approved') {
       statusNote = 'Order approved';
     }
-    
     if (orderStatus === 'ready_to_ship') {
       statusNote = 'Order ready to ship';
     }
-    
     if (orderStatus === 'reminder') {
       statusNote = 'Reminder sent to customer';
     }
-    
+    if (orderStatus === 'partial_delivery') {
+      statusNote = `Partial delivery initiated`;
+      if (order.paidAmount > 0) {
+        statusNote += ` | Paid: ৳${order.paidAmount.toFixed(2)}`;
+      }
+      if (order.returnedAmount > 0) {
+        statusNote += ` | Returned: ৳${order.returnedAmount.toFixed(2)}`;
+      }
+    }
+
     order.addStatusHistory(orderStatus, statusNote, userId, userRoleMapped);
-    
+
     await order.save();
-    
+
+    // ============================================================
+    // EMAILS
+    // ============================================================
     const shouldSendEmail = ['cancelled', 'delivered'].includes(orderStatus);
-    
+
     if (shouldSendEmail) {
       if (order.customerInfo.email && order.customerInfo.email.trim() !== '') {
         try {
@@ -2276,18 +2231,24 @@ const updateOrderStatus = async (req, res) => {
     } else {
       console.log(`📧 Skipping email for status: ${orderStatus} (Order: ${order.orderNumber})`);
     }
-    
+
+    // ============================================================
+    // RESPONSE
+    // ============================================================
     let responseMessage = `Order status updated to ${orderStatus}`;
     if (orderStatus === 'delivered' && order.paymentMethod === 'cod' && order.paymentStatus === 'paid') {
       responseMessage = `Order delivered and payment marked as Paid`;
     }
-    
+    if (orderStatus === 'partial_delivery') {
+      responseMessage = `Order moved to partial delivery. Payment: ${order.paymentStatus} (৳${order.paidAmount.toFixed(2)})`;
+    }
+
     res.json({
       success: true,
       data: order,
       message: responseMessage
     });
-    
+
   } catch (error) {
     console.error('Update order status error:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -2295,68 +2256,205 @@ const updateOrderStatus = async (req, res) => {
 };
 
 // ========== UPDATE PAYMENT STATUS ==========
+// const updatePaymentStatus = async (req, res) => {
+//   try {
+//     const { id } = req.params;
+//     const { paymentStatus, paymentDetails } = req.body;
+    
+//     const order = await Order.findById(id);
+    
+//     if (!order) {
+//       return res.status(404).json({ success: false, error: 'Order not found' });
+//     }
+
+//     if (order.orderStatus === 'cancelled') {
+//       return res.status(400).json({ 
+//         success: false, 
+//         error: 'Cannot update payment status for a cancelled order' 
+//       });
+//     }
+    
+//     const validStatuses = ['pending', 'paid', 'failed', 'refunded'];
+    
+//     if (!validStatuses.includes(paymentStatus)) {
+//       return res.status(400).json({ success: false, error: 'Invalid payment status' });
+//     }
+    
+//     const oldStatus = order.paymentStatus;
+//     const currentStatus = order.paymentStatus;
+    
+//     if (currentStatus === 'pending') {
+//       if (!['paid', 'failed'].includes(paymentStatus)) {
+//         return res.status(400).json({ 
+//           success: false, 
+//           error: 'Pending status can only be changed to Paid or Failed' 
+//         });
+//       }
+//     } else if (currentStatus === 'failed') {
+//       if (paymentStatus !== 'paid') {
+//         return res.status(400).json({ 
+//           success: false, 
+//           error: 'Failed status can only be changed to Paid' 
+//         });
+//       }
+//     } else if (currentStatus === 'paid') {
+//       if (paymentStatus !== 'refunded') {
+//         return res.status(400).json({ 
+//           success: false, 
+//           error: 'Paid status can only be changed to Refunded' 
+//         });
+//       }
+//     } else if (currentStatus === 'refunded') {
+//       return res.status(400).json({ 
+//         success: false, 
+//         error: 'Refunded status cannot be changed further' 
+//       });
+//     }
+    
+//     order.paymentStatus = paymentStatus;
+//     if (paymentDetails) {
+//       order.paymentDetails = { ...order.paymentDetails, ...paymentDetails };
+//     }
+    
+//     await order.save();
+    
+//     if (oldStatus !== paymentStatus) {
+//       if (order.customerInfo.email && order.customerInfo.email.trim() !== '') {
+//         try {
+//           await sendPaymentStatusUpdateEmail(order, order.customerInfo.email, oldStatus, paymentStatus);
+//           console.log('✅ Payment status update email sent to customer for order:', order.orderNumber);
+//         } catch (emailError) {
+//           console.error('❌ Payment status update email error:', emailError.message);
+//         }
+//       }
+
+//       try {
+//         await sendOrderNotificationToAdmin(order, 'payment_update');
+//         console.log('✅ Payment status update notification sent to admin for order:', order.orderNumber);
+//       } catch (emailError) {
+//         console.error('❌ Admin notification error on payment update:', emailError.message);
+//       }
+//     }
+    
+//     res.json({
+//       success: true,
+//       data: order,
+//       message: `Payment status updated to ${paymentStatus}`
+//     });
+    
+//   } catch (error) {
+//     console.error('Update payment status error:', error);
+//     res.status(500).json({ success: false, error: error.message });
+//   }
+// };
+
+// ========== UPDATE PAYMENT STATUS ==========
 const updatePaymentStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { paymentStatus, paymentDetails } = req.body;
-    
+
     const order = await Order.findById(id);
-    
+
     if (!order) {
       return res.status(404).json({ success: false, error: 'Order not found' });
     }
 
+    // ✅ Block payment changes for cancelled orders
     if (order.orderStatus === 'cancelled') {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Cannot update payment status for a cancelled order' 
+      return res.status(400).json({
+        success: false,
+        error: 'Cannot update payment status for a cancelled order'
       });
     }
-    
-    const validStatuses = ['pending', 'paid', 'failed', 'refunded'];
-    
+
+    // ✅ Valid statuses now include 'partial'
+    const validStatuses = ['pending', 'paid', 'failed', 'refunded', 'partial'];
+
     if (!validStatuses.includes(paymentStatus)) {
       return res.status(400).json({ success: false, error: 'Invalid payment status' });
     }
-    
+
     const oldStatus = order.paymentStatus;
     const currentStatus = order.paymentStatus;
-    
+
+    // ============================================================
+    // TRANSITION RULES
+    // ============================================================
     if (currentStatus === 'pending') {
-      if (!['paid', 'failed'].includes(paymentStatus)) {
-        return res.status(400).json({ 
-          success: false, 
-          error: 'Pending status can only be changed to Paid or Failed' 
+      if (!['paid', 'failed', 'partial'].includes(paymentStatus)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Pending status can only be changed to Paid, Partial, or Failed'
         });
       }
     } else if (currentStatus === 'failed') {
-      if (paymentStatus !== 'paid') {
-        return res.status(400).json({ 
-          success: false, 
-          error: 'Failed status can only be changed to Paid' 
+      if (!['paid', 'partial'].includes(paymentStatus)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Failed status can only be changed to Paid or Partial'
+        });
+      }
+    } else if (currentStatus === 'partial') {
+      if (!['paid', 'refunded'].includes(paymentStatus)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Partial status can only be changed to Paid or Refunded'
         });
       }
     } else if (currentStatus === 'paid') {
       if (paymentStatus !== 'refunded') {
-        return res.status(400).json({ 
-          success: false, 
-          error: 'Paid status can only be changed to Refunded' 
+        return res.status(400).json({
+          success: false,
+          error: 'Paid status can only be changed to Refunded'
         });
       }
     } else if (currentStatus === 'refunded') {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Refunded status cannot be changed further' 
+      return res.status(400).json({
+        success: false,
+        error: 'Refunded status cannot be changed further'
       });
     }
-    
+
+    // ============================================================
+    // APPLY NEW STATUS
+    // ============================================================
     order.paymentStatus = paymentStatus;
+
+    // ✅ Sync paidAmount based on manual payment status change
+    if (paymentStatus === 'paid') {
+      order.paidAmount = order.total;
+    } else if (paymentStatus === 'pending') {
+      order.paidAmount = 0;
+    } else if (paymentStatus === 'refunded') {
+      order.paidAmount = 0;
+      order.refundableAmount = 0;
+    }
+    // 'partial' keeps whatever was computed from deliveryItems
+    // 'failed' keeps existing paidAmount (usually 0)
+
+    // Merge any additional payment details passed in
     if (paymentDetails) {
       order.paymentDetails = { ...order.paymentDetails, ...paymentDetails };
     }
-    
+
+    // ============================================================
+    // RECOMPUTE FROM DELIVERY IF ORDER IS PARTIAL DELIVERY
+    // ============================================================
+    if (
+      order.orderStatus === 'partial_delivery' &&
+      order.deliveryItems &&
+      order.deliveryItems.length > 0 &&
+      paymentStatus === 'partial'
+    ) {
+      order.recomputePaymentFromDelivery();
+    }
+
     await order.save();
-    
+
+    // ============================================================
+    // EMAILS
+    // ============================================================
     if (oldStatus !== paymentStatus) {
       if (order.customerInfo.email && order.customerInfo.email.trim() !== '') {
         try {
@@ -2374,13 +2472,15 @@ const updatePaymentStatus = async (req, res) => {
         console.error('❌ Admin notification error on payment update:', emailError.message);
       }
     }
-    
+
     res.json({
       success: true,
       data: order,
-      message: `Payment status updated to ${paymentStatus}`
+      message: `Payment status updated to ${paymentStatus}` + (
+        order.paidAmount > 0 ? ` (Paid: ৳${order.paidAmount.toFixed(2)})` : ''
+      )
     });
-    
+
   } catch (error) {
     console.error('Update payment status error:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -2487,6 +2587,7 @@ const getAllOrders = async (req, res) => {
       limit = 20,
       orderStatus,
       paymentStatus,
+      orderPlatform, 
       search,
       startDate,
       endDate,
@@ -2497,6 +2598,7 @@ const getAllOrders = async (req, res) => {
     
     if (orderStatus) query.orderStatus = orderStatus;
     if (paymentStatus) query.paymentStatus = paymentStatus;
+    if (orderPlatform) query.orderPlatform = orderPlatform; 
     
     if (search) {
       const searchRegex = new RegExp(search, 'i');
@@ -3971,225 +4073,6 @@ const updateOrderDiscount = async (req, res) => {
   }
 };
 
-// ========== BULK UPDATE ORDER ==========
-// const bulkUpdateOrder = async (req, res) => {
-//   try {
-//     const { id } = req.params;
-//     const { 
-//       customerInfo, 
-//       items, 
-//       discount, 
-//       discountNote, 
-//       deliveryNote 
-//     } = req.body;
-
-//     const order = await Order.findById(id);
-//     if (!order) {
-//       return res.status(404).json({ success: false, error: 'Order not found' });
-//     }
-
-//     const nonEditableStatuses = [
-//       'courier_assigned', 'ready_to_ship', 'shipped', 'out_for_delivery',
-//       'delivered', 'partial_delivery', 'cancelled', 'rejected', 'refunded', 'returned'
-//     ];
-    
-//     if (nonEditableStatuses.includes(order.orderStatus)) {
-//       return res.status(400).json({
-//         success: false,
-//         error: `Order status is '${order.orderStatus}'. Cannot update at this stage.`
-//       });
-//     }
-
-//     if (!items || items.length === 0) {
-//       return res.status(400).json({ 
-//         success: false, 
-//         error: 'Order must have at least one item' 
-//       });
-//     }
-
-//     const productIds = items.map(item => item.productId).filter(id => id);
-    
-//     const products = await Product.find({
-//       _id: { $in: productIds }
-//     });
-    
-//     const productMap = {};
-//     products.forEach(product => {
-//       productMap[product._id.toString()] = product;
-//     });
-
-//     for (const item of items) {
-//       if (!item.productId) continue;
-      
-//       const product = productMap[item.productId.toString()];
-//       if (!product) {
-//         return res.status(404).json({ 
-//           success: false, 
-//           error: `Product "${item.productName}" not found` 
-//         });
-//       }
-      
-//       const totalQuantityForProduct = items
-//         .filter(i => i.productId && i.productId.toString() === item.productId.toString())
-//         .reduce((sum, i) => sum + (i.quantity || 0), 0);
-      
-//       if (totalQuantityForProduct > product.stockQuantity) {
-//         return res.status(400).json({
-//           success: false,
-//           error: `"${product.productName}": Total quantity (${totalQuantityForProduct}) exceeds available stock (${product.stockQuantity})`
-//         });
-//       }
-//     }
-
-//     if (customerInfo) {
-//       order.customerInfo = {
-//         ...order.customerInfo.toObject ? order.customerInfo.toObject() : order.customerInfo,
-//         ...customerInfo
-//       };
-//     }
-
-//     if (deliveryNote !== undefined) {
-//       order.deliveryNote = deliveryNote;
-//     }
-
-//     const processedItems = items.map(item => {
-//       const productData = item.productId ? 
-//         productMap[item.productId.toString()] : 
-//         null;
-      
-//       let productSlug = item.productSlug;
-//       if (!productSlug && item.productName) {
-//         productSlug = item.productName
-//           .toLowerCase()
-//           .replace(/[^a-z0-9]+/g, '-')
-//           .replace(/^-+|-+$/g, '');
-//       }
-//       if (!productSlug) {
-//         productSlug = 'unknown-product';
-//       }
-      
-//       const isSubVariant = !!(item.subVariantId && item.subVariantId !== 'null' && item.subVariantId !== '');
-//       const isVariant = !!(item.variantId && item.variantId !== 'null' && item.variantId !== '');
-      
-//       let finalRegularPrice = item.regularPrice || productData?.regularPrice || 0;
-//       let finalDiscountPrice = item.discountPrice || productData?.discountPrice || 0;
-      
-//       if (isSubVariant) {
-//         if (item.variantDiscountPrice && item.variantDiscountPrice > 0) {
-//           finalDiscountPrice = item.variantDiscountPrice;
-//           finalRegularPrice = item.variantRegularPrice || item.regularPrice || productData?.regularPrice || 0;
-//         } else if (item.variantRegularPrice && item.variantRegularPrice > 0) {
-//           finalRegularPrice = item.variantRegularPrice;
-//         }
-//       } else if (isVariant) {
-//         if (item.variantDiscountPrice && item.variantDiscountPrice > 0) {
-//           finalDiscountPrice = item.variantDiscountPrice;
-//           finalRegularPrice = item.variantRegularPrice || item.regularPrice || productData?.regularPrice || 0;
-//         } else if (item.variantRegularPrice && item.variantRegularPrice > 0) {
-//           finalRegularPrice = item.variantRegularPrice;
-//         }
-//       }
-      
-//       // Build nested variant details
-//       const variantDetails = [];
-//       if (isVariant || isSubVariant) {
-//         const variantDetail = {
-//           variantId: item.variantId || null,
-//           variantName: item.variantName || null,
-//           variantType: item.variantType || null,
-//           variantRegularPrice: finalRegularPrice,
-//           variantDiscountPrice: finalDiscountPrice,
-//           selectedColor: item.selectedColor || null,
-//           quantity: item.quantity || 0,
-//           image: item.image || '',
-//           subVariants: []
-//         };
-        
-//         if (isSubVariant) {
-//           variantDetail.subVariants.push({
-//             subVariantId: item.subVariantId,
-//             subVariantName: item.subVariantName,
-//             subVariantRegularPrice: finalRegularPrice,
-//             subVariantDiscountPrice: finalDiscountPrice,
-//             selectedColor: item.selectedColor || null,
-//             quantity: item.quantity || 0,
-//             image: item.image || ''
-//           });
-//         }
-        
-//         variantDetails.push(variantDetail);
-//       }
-      
-//       return {
-//         productId: item.productId,
-//         productName: item.productName || 'Unknown Product',
-//         productSlug: productSlug,
-//         image: item.image || (productData?.images?.[0]?.url) || '',
-//         regularPrice: finalRegularPrice,
-//         discountPrice: finalDiscountPrice,
-//         costPerItem: item.costPerItem || productData?.costPerItem || 0,
-//         buyingPrice: item.buyingPrice || productData?.buyingPrice || 0,
-//         quantity: item.quantity || 1,
-//         stockQuantity: item.stockQuantity || productData?.stockQuantity || 0,
-//         unit: item.unit || productData?.unit || 'pcs',
-//         selectedColor: item.selectedColor || null,
-//         colors: item.colors || [],
-//         variantDetails: variantDetails
-//       };
-//     });
-
-//     order.items = processedItems;
-
-//     const oldDiscount = order.discount || 0;
-//     order.discount = discount || 0;
-
-//     let subtotal = 0;
-//     order.items.forEach(item => {
-//       const price = item.discountPrice > 0 ? item.discountPrice : item.regularPrice;
-//       subtotal += price * (item.quantity || 0);
-//     });
-
-//     order.subtotal = subtotal;
-//     const calculatedTotal = subtotal + (order.shippingCost || 0) - (order.discount || 0);
-//     order.total = Math.max(0, calculatedTotal);
-
-//     let statusNote = `Order updated by admin: `;
-//     if (items.length !== (order.items ? order.items.length : 0)) {
-//       statusNote += `Items updated (${items.length} items). `;
-//     }
-//     if (discount !== oldDiscount) {
-//       statusNote += `Discount changed from ৳${oldDiscount.toFixed(2)} to ৳${(discount || 0).toFixed(2)}. `;
-//     }
-//     if (discountNote) {
-//       statusNote += `Note: ${discountNote}`;
-//     }
-
-//     order.addStatusHistory(
-//       order.orderStatus,
-//       statusNote,
-//       req.user?._id,
-//       req.user?.role || 'admin'
-//     );
-
-//     await order.save();
-
-//     await order.populate([
-//       { path: 'userId', select: 'name email phone' },
-//       { path: 'statusHistory.updatedBy', select: 'email name contactPerson' }
-//     ]);
-
-//     res.json({
-//       success: true,
-//       data: order,
-//       message: 'Order updated successfully'
-//     });
-
-//   } catch (error) {
-//     console.error('Bulk update order error:', error);
-//     res.status(500).json({ success: false, error: error.message });
-//   }
-// };
-
 // ========== BULK UPDATE ORDER - CLEAN VERSION (FIXED IMAGES) ==========
 const bulkUpdateOrder = async (req, res) => {
   try {
@@ -4465,6 +4348,200 @@ const bulkUpdateOrder = async (req, res) => {
   }
 };
 
+// ========== UPDATE PARTIAL DELIVERY ==========
+const updatePartialDelivery = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { deliveryItems, note } = req.body;
+
+    if (!deliveryItems || !Array.isArray(deliveryItems) || deliveryItems.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'deliveryItems array is required'
+      });
+    }
+
+    const order = await Order.findById(id);
+    if (!order) {
+      return res.status(404).json({ success: false, error: 'Order not found' });
+    }
+
+    const allowedStatuses = [
+      'courier_assigned',
+      'ready_to_ship',
+      'delivered',
+      'partial_delivery'
+    ];
+    if (!allowedStatuses.includes(order.orderStatus)) {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot update partial delivery from status "${order.orderStatus}"`
+      });
+    }
+
+    if (!order.deliveryItems || order.deliveryItems.length === 0) {
+      order.initializeDeliveryItems();
+    }
+
+    const deliveryMap = new Map();
+    order.deliveryItems.forEach((di) => {
+      deliveryMap.set(di._id.toString(), di);
+    });
+
+    // Apply updates
+    for (const update of deliveryItems) {
+      const di = deliveryMap.get(update._id?.toString());
+      if (!di) continue;
+
+      const delivered = Math.max(0, Number(update.deliveredQuantity) || 0);
+      const returned = Math.max(0, Number(update.returnedQuantity) || 0);
+      const pending = Math.max(0, Number(update.pendingQuantity) || 0);
+
+      const total = delivered + returned + pending;
+      if (total !== di.orderedQuantity) {
+        return res.status(400).json({
+          success: false,
+          error: `For "${di.productName}${di.variantName ? ' - ' + di.variantName : ''}${di.subVariantName ? ' - ' + di.subVariantName : ''}": delivered (${delivered}) + returned (${returned}) + pending (${pending}) must equal ordered quantity (${di.orderedQuantity})`
+        });
+      }
+
+      di.deliveredQuantity = delivered;
+      di.returnedQuantity = returned;
+      di.pendingQuantity = pending;
+      di.note = update.note || di.note || '';
+      di.markedBy = req.user?._id || null;
+      di.markedAt = new Date();
+
+      if (delivered === di.orderedQuantity) {
+        di.deliveryStatus = 'delivered';
+      } else if (returned === di.orderedQuantity) {
+        di.deliveryStatus = 'returned';
+      } else if (pending === di.orderedQuantity) {
+        di.deliveryStatus = 'pending';
+      } else {
+        di.deliveryStatus = 'partial';
+      }
+    }
+
+    // Compute overall status from delivery items
+    const oldStatus = order.orderStatus;
+    const newStatus = order.recomputeStatusFromDeliveryItems();
+
+    if (order.orderStatus === 'delivered' && newStatus !== 'delivered') {
+      order.deliveredAt = null;
+    }
+
+    order.orderStatus = newStatus;
+
+    // ✅ NEW: Recompute payment
+    order.recomputePaymentFromDelivery();
+
+    // If fully delivered → COD auto-paid to full amount
+    if (newStatus === 'delivered') {
+      order.deliveredAt = new Date();
+      if (order.paymentMethod === 'cod') {
+        order.paymentStatus = 'paid';
+        order.paidAmount = order.total;
+        order.returnedAmount = 0;
+        order.refundableAmount = 0;
+        if (!order.paymentDetails) order.paymentDetails = {};
+        order.paymentDetails.paidAt = new Date();
+        order.paymentDetails.paidBy = 'System (Auto-updated on full delivery)';
+      }
+    } else if (newStatus === 'returned') {
+      order.returnedAt = new Date();
+      // Nothing delivered → nothing to pay
+      if (order.paymentMethod === 'cod') {
+        order.paymentStatus = 'pending';
+        order.paidAmount = 0;
+      }
+    } else if (newStatus === 'partial_delivery') {
+      // recomputePaymentFromDelivery already set 'partial' or 'pending' or 'paid'
+    }
+
+    // Build summary for history
+    const summary = order.deliveryItems
+      .filter(di => di.deliveredQuantity > 0 || di.returnedQuantity > 0)
+      .map(di => {
+        const label = [di.productName, di.variantName, di.subVariantName].filter(Boolean).join(' / ');
+        return `${label}: D${di.deliveredQuantity} R${di.returnedQuantity} P${di.pendingQuantity}`;
+      })
+      .join('; ');
+
+    let historyNote = `Partial delivery updated. ${summary}`;
+    if (note) historyNote += ` | Note: ${note}`;
+    historyNote += ` | Paid: ৳${order.paidAmount.toFixed(2)}`;
+    if (order.returnedAmount > 0) {
+      historyNote += ` | Returned value: ৳${order.returnedAmount.toFixed(2)}`;
+    }
+
+    order.addStatusHistory(
+      newStatus,
+      historyNote,
+      req.user?._id,
+      req.user?.role || 'admin'
+    );
+
+    await order.save();
+
+    // Email if fully delivered or returned
+    if (['delivered', 'returned'].includes(newStatus) && oldStatus !== newStatus) {
+      if (order.customerInfo?.email && order.customerInfo.email.trim() !== '') {
+        try {
+          const { sendOrderStatusUpdateEmail } = require('../utils/orderEmailService');
+          await sendOrderStatusUpdateEmail(order, order.customerInfo.email, oldStatus, newStatus);
+        } catch (e) {
+          console.error('Email error:', e.message);
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      data: order,
+      message: `Partial delivery saved. Order is now "${newStatus}". Paid: ৳${order.paidAmount.toFixed(2)}`
+    });
+
+  } catch (error) {
+    console.error('Update partial delivery error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// ========== GET PARTIAL DELIVERY ITEMS ==========
+const getPartialDeliveryItems = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const order = await Order.findById(id);
+    if (!order) {
+      return res.status(404).json({ success: false, error: 'Order not found' });
+    }
+
+    if (!order.deliveryItems || order.deliveryItems.length === 0) {
+      order.initializeDeliveryItems();
+      await order.save();
+    }
+
+    res.json({
+      success: true,
+      data: {
+        orderId: order._id,
+        orderNumber: order.orderNumber,
+        orderStatus: order.orderStatus,
+        paymentStatus: order.paymentStatus,
+        paidAmount: order.paidAmount || 0,
+        returnedAmount: order.returnedAmount || 0,
+        refundableAmount: order.refundableAmount || 0,
+        total: order.total,
+        deliveryItems: order.deliveryItems
+      }
+    });
+  } catch (error) {
+    console.error('Get partial delivery items error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
 // ========== EXPORTS ==========
 module.exports = {
   createOrder,
@@ -4493,5 +4570,7 @@ module.exports = {
   updateOrderDiscount,
   searchProductsForOrder,
   bulkUpdateOrder,
-  getBulkTrackingStatuses
+  getBulkTrackingStatuses,
+  updatePartialDelivery,
+  getPartialDeliveryItems
 };

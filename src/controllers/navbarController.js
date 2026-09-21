@@ -671,7 +671,7 @@ const createDefaultNavbar = async () => {
       logoUrl: ''
     },
     topBar: {
-      phone: '+880 1XXXXXXXXX',
+      phone: '+880 1747-708644',
       phoneLink: '/contact',
       showTrackOrder: true,
       trackOrderLink: '/track',
