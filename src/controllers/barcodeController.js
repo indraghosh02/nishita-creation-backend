@@ -182,7 +182,8 @@ const getAssignedBarcodes = async (req, res) => {
     
     const [barcodes, total] = await Promise.all([
       Barcode.find(query)
-        .populate('productId', 'productName skuCode images')
+        // .populate('productId', 'productName skuCode images')
+        .populate('productId', 'productName slug skuCode images')
         .sort({ updatedAt: -1 })
         .skip(skip)
         .limit(parseInt(limit)),
@@ -275,27 +276,124 @@ const getAssignedBarcodes = async (req, res) => {
 // @desc    Validate barcode (check if available for assignment)
 // @route   GET /api/barcodes/validate/:barcodeNumber
 // @access  Public
+// const validateBarcode = async (req, res) => {
+//   try {
+//     const { barcodeNumber } = req.params;
+//     const { productId } = req.query; // Add productId query parameter
+    
+//     // Check if barcode exists in database
+//     const barcode = await Barcode.findOne({ barcodeNumber });
+    
+    
+//     // Check if barcode is already assigned to ANY product (excluding current product if editing)
+//     let existingProduct = null;
+//     if (productId) {
+//       // If editing, exclude the current product
+//       existingProduct = await Product.findOne({ 
+//         barcode: barcodeNumber,
+//         _id: { $ne: productId } // Exclude current product
+//       });
+//     } else {
+//       // If creating new product
+//       existingProduct = await Product.findOne({ barcode: barcodeNumber });
+//     }
+    
+//     if (!barcode && !existingProduct) {
+//       return res.json({
+//         success: true,
+//         data: {
+//           isValid: true,
+//           exists: false,
+//           status: 'new',
+//           message: 'This barcode can be used for a new product'
+//         }
+//       });
+//     }
+    
+//     // Check if barcode is assigned to a product (and not the current one)
+//     if (existingProduct) {
+//       return res.json({
+//         success: true,
+//         data: {
+//           isValid: false,
+//           exists: true,
+//           status: 'assigned',
+//           productId: existingProduct._id,
+//           productName: existingProduct.productName,
+//           message: `This barcode is already assigned to product: ${existingProduct.productName}`
+//         }
+//       });
+//     }
+    
+//     // Check barcode collection status
+//     if (barcode && barcode.status === 'assigned') {
+//       // Check if it's assigned to a different product
+//       if (barcode.productId && (!productId || barcode.productId.toString() !== productId)) {
+//         return res.json({
+//           success: true,
+//           data: {
+//             isValid: false,
+//             exists: true,
+//             status: 'assigned',
+//             productId: barcode.productId,
+//             productName: barcode.productName,
+//             message: `This barcode is already assigned to product: ${barcode.productName}`
+//           }
+//         });
+//       }
+//     }
+    
+//     if (barcode && barcode.status === 'available') {
+//       return res.json({
+//         success: true,
+//         data: {
+//           isValid: true,
+//           exists: true,
+//           status: 'available',
+//           message: 'This barcode is available and can be assigned'
+//         }
+//       });
+//     }
+    
+//     res.json({
+//       success: true,
+//       data: {
+//         isValid: true,
+//         exists: true,
+//         status: barcode?.status || 'available',
+//         message: 'Barcode is available'
+//       }
+//     });
+//   } catch (error) {
+//     console.error('Validate barcode error:', error);
+//     res.status(500).json({
+//       success: false,
+//       error: error.message
+//     });
+//   }
+// };
+
 const validateBarcode = async (req, res) => {
   try {
     const { barcodeNumber } = req.params;
-    const { productId } = req.query; // Add productId query parameter
-    
-    // Check if barcode exists in database
-    const barcode = await Barcode.findOne({ barcodeNumber });
-    
-    // Check if barcode is already assigned to ANY product (excluding current product if editing)
+    const { productId } = req.query;
+
+    // ✅ CHANGE 1: Populate productId with slug
+    const barcode = await Barcode.findOne({ barcodeNumber })
+      .populate('productId', 'productName slug skuCode');
+
+    // Check if barcode is already assigned to a Product document
     let existingProduct = null;
     if (productId) {
-      // If editing, exclude the current product
-      existingProduct = await Product.findOne({ 
+      existingProduct = await Product.findOne({
         barcode: barcodeNumber,
-        _id: { $ne: productId } // Exclude current product
-      });
+        _id: { $ne: productId }
+      }).select('productName slug skuCode');
     } else {
-      // If creating new product
-      existingProduct = await Product.findOne({ barcode: barcodeNumber });
+      existingProduct = await Product.findOne({ barcode: barcodeNumber })
+        .select('productName slug skuCode');   // ✅ CHANGE 2: select slug
     }
-    
+
     if (!barcode && !existingProduct) {
       return res.json({
         success: true,
@@ -307,8 +405,8 @@ const validateBarcode = async (req, res) => {
         }
       });
     }
-    
-    // Check if barcode is assigned to a product (and not the current one)
+
+    // ✅ CHANGE 3: Add productSlug to Product-model match
     if (existingProduct) {
       return res.json({
         success: true,
@@ -317,30 +415,38 @@ const validateBarcode = async (req, res) => {
           exists: true,
           status: 'assigned',
           productId: existingProduct._id,
+          productSlug: existingProduct.slug,              // ← NEW
           productName: existingProduct.productName,
           message: `This barcode is already assigned to product: ${existingProduct.productName}`
         }
       });
     }
-    
-    // Check barcode collection status
+
+    // ✅ CHANGE 4: Add productSlug to Barcode-model match
     if (barcode && barcode.status === 'assigned') {
-      // Check if it's assigned to a different product
       if (barcode.productId && (!productId || barcode.productId.toString() !== productId)) {
+        // barcode.productId is now a populated object, so extract _id and slug
+        const populatedProductId =
+          barcode.productId?._id || barcode.productId;
+        const populatedSlug = barcode.productId?.slug || null;
+        const populatedName =
+          barcode.productName || barcode.productId?.productName || '';
+
         return res.json({
           success: true,
           data: {
             isValid: false,
             exists: true,
             status: 'assigned',
-            productId: barcode.productId,
-            productName: barcode.productName,
-            message: `This barcode is already assigned to product: ${barcode.productName}`
+            productId: populatedProductId,      // ← string/objectId
+            productSlug: populatedSlug,          // ← NEW (slug for routing)
+            productName: populatedName,
+            message: `This barcode is already assigned to product: ${populatedName}`
           }
         });
       }
     }
-    
+
     if (barcode && barcode.status === 'available') {
       return res.json({
         success: true,
@@ -352,7 +458,7 @@ const validateBarcode = async (req, res) => {
         }
       });
     }
-    
+
     res.json({
       success: true,
       data: {

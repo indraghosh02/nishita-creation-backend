@@ -2567,6 +2567,276 @@ const duplicateProduct = async (req, res) => {
 };
 
 // ============================================================
+// BULK RESTOCK
+// ============================================================
+// const restockBulk = async (req, res) => {
+//   try {
+//     const { items } = req.body;
+
+//     if (!Array.isArray(items) || items.length === 0) {
+//       return res.status(400).json({ success: false, error: 'No items provided' });
+//     }
+
+//     if (!['super_admin', 'admin', 'moderator'].includes(req.user.role)) {
+//       return res.status(403).json({
+//         success: false,
+//         error: 'Permission denied. Only admins and moderators can restock.',
+//       });
+//     }
+
+//     let updatedCount = 0;
+//     const errors = [];
+//     const results = [];
+
+//     for (const item of items) {
+//       const { productId, variantId, subVariantId, addQuantity } = item;
+//       const add = Math.max(0, parseInt(addQuantity, 10) || 0);
+//       if (!productId || add <= 0) continue;
+
+//       try {
+//         const product = await Product.findById(productId);
+//         if (!product) {
+//           errors.push({ productId, error: 'Product not found' });
+//           continue;
+//         }
+
+//         let newStock = 0;
+
+//         // ----------- BASE PRODUCT -----------
+//         if (!variantId && !subVariantId) {
+//           product.stockQuantity = (Number(product.stockQuantity) || 0) + add;
+//           newStock = product.stockQuantity;
+//         }
+//         // ----------- VARIANT -----------
+//         else if (variantId && !subVariantId) {
+//           let found = false;
+//           for (const vt of product.variantTypes || []) {
+//             for (const v of vt.variants || []) {
+//               const vId = v.id || (v._id ? v._id.toString() : null);
+//               if (vId === variantId) {
+//                 v.stockQuantity = (Number(v.stockQuantity) || 0) + add;
+//                 newStock = v.stockQuantity;
+//                 found = true;
+//                 break;
+//               }
+//             }
+//             if (found) break;
+//           }
+//           if (!found) {
+//             errors.push({ productId, variantId, error: 'Variant not found' });
+//             continue;
+//           }
+//         }
+//         // ----------- SUB-VARIANT -----------
+//         else {
+//           let found = false;
+//           for (const vt of product.variantTypes || []) {
+//             for (const v of vt.variants || []) {
+//               const vId = v.id || (v._id ? v._id.toString() : null);
+//               if (vId === variantId) {
+//                 for (const sv of v.subVariants || []) {
+//                   const svId = sv.id || (sv._id ? sv._id.toString() : null);
+//                   if (svId === subVariantId) {
+//                     sv.stockQuantity = (Number(sv.stockQuantity) || 0) + add;
+//                     newStock = sv.stockQuantity;
+//                     found = true;
+//                     break;
+//                   }
+//                 }
+//               }
+//               if (found) break;
+//             }
+//             if (found) break;
+//           }
+//           if (!found) {
+//             errors.push({ productId, subVariantId, error: 'Sub-variant not found' });
+//             continue;
+//           }
+//         }
+
+//         product.updatedBy = req.user.id;
+//         product.lastUpdatedAt = new Date();
+//         await product.save();
+
+//         updatedCount++;
+//         results.push({ productId, variantId, subVariantId, newStock });
+
+//         // ✅ Sync embedded product in Category (best-effort)
+//         try {
+//           await Category.findOneAndUpdate(
+//             { _id: product.category, 'products.productId': product._id },
+//             { $set: { 'products.$.stockQuantity': product.stockQuantity } }
+//           );
+//         } catch (syncErr) {
+//           console.error('Category sync error:', syncErr);
+//         }
+//       } catch (itemErr) {
+//         console.error('Restock item error:', itemErr);
+//         errors.push({ productId, error: itemErr.message });
+//       }
+//     }
+
+//     res.json({
+//       success: true,
+//       data: { updatedCount, errors, results },
+//       message: `Restocked ${updatedCount} item(s)`,
+//     });
+//   } catch (error) {
+//     console.error('Bulk restock error:', error);
+//     res.status(500).json({
+//       success: false,
+//       error: error.message || 'Server error while restocking',
+//     });
+//   }
+// };
+
+const restockBulk = async (req, res) => {
+  try {
+    const { items } = req.body;
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ success: false, error: 'No items provided' });
+    }
+
+    if (!['super_admin', 'admin', 'moderator'].includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Permission denied. Only admins and moderators can restock.',
+      });
+    }
+
+    let updatedCount = 0;
+    const errors = [];
+    const results = [];
+
+    for (const item of items) {
+      const { productId, variantId, subVariantId, addQuantity } = item;
+      const add = Math.max(0, parseInt(addQuantity, 10) || 0);
+      if (!productId || add <= 0) continue;
+
+      try {
+        const product = await Product.findById(productId);
+        if (!product) {
+          errors.push({ productId, error: 'Product not found' });
+          continue;
+        }
+
+        let newStock = 0;
+
+        // ----------- BASE PRODUCT -----------
+        if (!variantId && !subVariantId) {
+          product.stockQuantity = (Number(product.stockQuantity) || 0) + add;
+          newStock = product.stockQuantity;
+        }
+        // ----------- VARIANT -----------
+        else if (variantId && !subVariantId) {
+          let found = false;
+          for (const vt of product.variantTypes || []) {
+            for (const v of vt.variants || []) {
+              const vId = v.id || (v._id ? v._id.toString() : null);
+              if (vId === variantId) {
+                v.stockQuantity = (Number(v.stockQuantity) || 0) + add;
+                newStock = v.stockQuantity;
+                found = true;
+                break;
+              }
+            }
+            if (found) break;
+          }
+          if (!found) {
+            errors.push({ productId, variantId, error: 'Variant not found' });
+            continue;
+          }
+          // ✅ Parent product stock also increases
+          product.stockQuantity = (Number(product.stockQuantity) || 0) + add;
+        }
+        // ----------- SUB-VARIANT -----------
+        else {
+          let found = false;
+          let parentVariant = null;
+          for (const vt of product.variantTypes || []) {
+            for (const v of vt.variants || []) {
+              const vId = v.id || (v._id ? v._id.toString() : null);
+              if (vId === variantId) {
+                for (const sv of v.subVariants || []) {
+                  const svId = sv.id || (sv._id ? sv._id.toString() : null);
+                  if (svId === subVariantId) {
+                    sv.stockQuantity = (Number(sv.stockQuantity) || 0) + add;
+                    newStock = sv.stockQuantity;
+                    parentVariant = v;
+                    found = true;
+                    break;
+                  }
+                }
+              }
+              if (found) break;
+            }
+            if (found) break;
+          }
+          if (!found) {
+            errors.push({ productId, subVariantId, error: 'Sub-variant not found' });
+            continue;
+          }
+          // ✅ Parent variant stock also increases
+          if (parentVariant) {
+            parentVariant.stockQuantity =
+              (Number(parentVariant.stockQuantity) || 0) + add;
+          }
+          // ✅ Parent product stock also increases
+          product.stockQuantity = (Number(product.stockQuantity) || 0) + add;
+        }
+
+        product.updatedBy = req.user.id;
+        product.lastUpdatedAt = new Date();
+        await product.save();
+
+        updatedCount++;
+        results.push({ productId, variantId, subVariantId, newStock });
+
+        // Sync embedded category product (base stock)
+        try {
+          await Category.findOneAndUpdate(
+            { _id: product.category, 'products.productId': product._id },
+            { $set: { 'products.$.stockQuantity': product.stockQuantity } }
+          );
+        } catch (syncErr) {
+          console.error('Category sync error:', syncErr);
+        }
+      } catch (itemErr) {
+        console.error('Restock item error:', itemErr);
+        errors.push({ productId, error: itemErr.message });
+      }
+    }
+
+    res.json({
+      success: true,
+      data: { updatedCount, errors, results },
+      message: `Restocked ${updatedCount} item(s)`,
+    });
+  } catch (error) {
+    console.error('Bulk restock error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Server error while restocking',
+    });
+  }
+};
+
+const getProductByBarcode = async (req, res) => {
+  try {
+    const { barcodeNumber } = req.params;
+    const product = await Product.findOne({ barcode: barcodeNumber })
+      .select('productName slug images regularPrice discountPrice stockQuantity rating isActive');
+    if (!product) {
+      return res.status(404).json({ success: false, error: 'No product found for this barcode' });
+    }
+    res.json({ success: true, data: product });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// ============================================================
 // EXPORT
 // ============================================================
 module.exports = {
@@ -2586,4 +2856,6 @@ module.exports = {
   getUniqueUnits,
   getColorsByIds,
    duplicateProduct,
+     restockBulk,
+     getProductByBarcode
 };

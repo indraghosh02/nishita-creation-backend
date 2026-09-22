@@ -544,7 +544,7 @@ const defaultContact = () => ({
       value: '+880 1747708644',
       link: 'tel:+8801747708644',
       description:
-        'Our customer care team is available from 10 AM to 8 PM every day.',
+        'Our customer care team is available 24/7. Call us anytime',
       displayOrder: 2,
       isActive: true,
     },

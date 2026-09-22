@@ -280,7 +280,9 @@ const {
   getAdminProducts,
   getUniqueUnits,
   getColorsByIds,
-  duplicateProduct
+  duplicateProduct,
+    restockBulk,
+    getProductByBarcode,
 } = require('../controllers/productController');
 
 // ============================================================
@@ -293,6 +295,7 @@ router.get('/flash-sale', getFlashSaleProducts);
 router.get('/trending', getTrendingProducts);
 router.get('/units/all', getUniqueUnits);
 router.post('/colors-by-ids', getColorsByIds);
+router.get('/barcode/:barcodeNumber', getProductByBarcode);
 
 // Barcode/SKU search routes
 // router.get('/barcode/:barcode', async (req, res) => {
@@ -623,5 +626,6 @@ router.put('/:id', isModeratorOrAdmin, updateProduct);
 router.delete('/:id', isModeratorOrAdmin, deleteProduct);
 router.get('/admin/all', isModeratorOrAdmin, getAdminProducts);
 router.post('/:id/duplicate', isModeratorOrAdmin, duplicateProduct);
+router.post('/restock-bulk', isModeratorOrAdmin, restockBulk);
 
 module.exports = router;

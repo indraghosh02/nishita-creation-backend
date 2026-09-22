@@ -1388,7 +1388,7 @@ const orderSchema = new mongoose.Schema({
   },
   orderPlatform: {
     type: String,
-    enum: ['website', 'facebook', 'showroom'],
+    enum: ['website', 'facebook', 'instagram', 'showroom'],
     default: 'website'
   },
   paymentStatus: {
