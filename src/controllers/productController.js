@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const Product = require('../models/Product');
 const Category = require('../models/Category');
 const Barcode = require('../models/Barcode');
+const RestockLog = require('../models/RestockLog');
 
 // Helper function to extract public ID from Cloudinary URL
 const extractPublicIdFromUrl = (url) => {
@@ -1132,6 +1133,690 @@ const getProductById = async (req, res) => {
 // ============================================================
 // UPDATE PRODUCT
 // ============================================================
+// const updateProduct = async (req, res) => {
+//   try {
+//     const product = await Product.findById(req.params.id);
+
+//     if (!product) {
+//       return res.status(404).json({ success: false, error: 'Product not found' });
+//     }
+//     // ✅ Capture the base stock BEFORE any mutation, for restock logging
+// const previousBaseStock = Number(product.stockQuantity) || 0;
+
+//     if (!['super_admin', 'admin', 'moderator'].includes(req.user.role)) {
+//       return res.status(403).json({
+//         success: false,
+//         error: 'Permission denied. Only super admins, admins, and moderators can update products.'
+//       });
+//     }
+
+//     const {
+//       productName,
+//       slug,
+//       shortDescription,
+//       fullDescription,
+//       category,
+//       subcategory,
+//       childSubcategory,
+//       brand,
+//       stockQuantity,
+//       stockAlertQuantity,
+//       skuCode,
+//       regularPrice,
+//       discountPrice,
+//       buyingPrice,
+//       packagingCost,
+//       deliveryCost,
+//       unit,
+//       customUnit,
+//       colors,
+//       deliveryInfo,
+//       tags,
+//       isFeatured,
+//       showOnBanner,
+//       comingSoon,
+//       isActive,
+//       rating,
+//       additionalInfo,
+//       faqs,
+//       metaSettings,
+//       images,
+//       barcode,
+//       videoUrl,
+//       videoPublicId,
+//       videoType,
+//       hasVariants,
+//       variants,
+//       addOnes
+//     } = req.body;
+
+//     // ============================================
+//     // BUYING PRICE - Only super_admin and admin can update
+//     // ============================================
+//     let finalBuyingPrice = product.buyingPrice || 0;
+//     if (req.user.role === 'super_admin' || req.user.role === 'admin') {
+//       if (buyingPrice !== undefined) {
+//         finalBuyingPrice = buyingPrice ? Number(buyingPrice) : 0;
+//       }
+//     }
+
+//     let finalPackagingCost = product.packagingCost || 0;
+//     if (packagingCost !== undefined) {
+//       finalPackagingCost = packagingCost ? Number(packagingCost) : 0;
+//     }
+
+//     let finalDeliveryCost = product.deliveryCost || 0;
+//     if (deliveryCost !== undefined) {
+//       finalDeliveryCost = deliveryCost ? Number(deliveryCost) : 0;
+//     }
+
+//     // Auto-calculate cost per item
+//     const calculatedCostPerItem = finalBuyingPrice + finalPackagingCost + finalDeliveryCost;
+
+//     // ============================================
+//     // SLUG VALIDATION
+//     // ============================================
+//     let finalSlug = product.slug;
+//     if (slug !== undefined && slug !== product.slug) {
+//       if (slug) {
+//         finalSlug = slug
+//           .toLowerCase()
+//           .trim()
+//           .replace(/[^a-z0-9]+/g, '-')
+//           .replace(/(^-|-$)+/g, '');
+
+//         const existingSlug = await Product.findOne({
+//           slug: finalSlug,
+//           _id: { $ne: product._id }
+//         });
+//         if (existingSlug) {
+//           return res.status(400).json({
+//             success: false,
+//             error: `Slug "${finalSlug}" is already taken. Please use a different slug.`
+//           });
+//         }
+//       } else {
+//         finalSlug = productName
+//           ? productName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '')
+//           : product.productName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
+//       }
+//     }
+
+//     // ============================================
+//     // BARCODE VALIDATION
+//     // ============================================
+//     let newBarcode = product.barcode;
+//     let shouldUpdateBarcode = false;
+
+//     if (barcode !== undefined && barcode !== product.barcode) {
+//       shouldUpdateBarcode = true;
+
+//       if (barcode === '' || barcode === null) {
+//         newBarcode = undefined;
+//       } else {
+//         // Validate format
+//         if (!/^[0-9]{8,13}$/.test(barcode)) {
+//           return res.status(400).json({
+//             success: false,
+//             error: 'Barcode must be 8-13 digits only'
+//           });
+//         }
+
+//         // Check if barcode is used by another product
+//         const existingProductWithBarcode = await Product.findOne({
+//           barcode: barcode,
+//           _id: { $ne: product._id }
+//         });
+//         if (existingProductWithBarcode) {
+//           return res.status(400).json({
+//             success: false,
+//             error: `Barcode "${barcode}" is already assigned to product: ${existingProductWithBarcode.productName}`
+//           });
+//         }
+
+//         // Check Barcode collection
+//         const barcodeDoc = await Barcode.findOne({ barcodeNumber: barcode });
+//         if (barcodeDoc && barcodeDoc.status === 'assigned' && barcodeDoc.productId?.toString() !== product._id.toString()) {
+//           return res.status(400).json({
+//             success: false,
+//             error: `Barcode "${barcode}" is already assigned to another product`
+//           });
+//         }
+
+//         newBarcode = barcode;
+//       }
+//     }
+
+//     // Get brand name from brand ID (if provided)
+//     let brandName = brand;
+//     if (brand && mongoose.Types.ObjectId.isValid(brand)) {
+//       try {
+//         const Brand = require('../models/Brand');
+//         const brandDoc = await Brand.findById(brand);
+//         if (brandDoc) {
+//           brandName = brandDoc.name;
+//         } else {
+//           brandName = brand;
+//         }
+//       } catch (brandError) {
+//         console.error('Error fetching brand:', brandError);
+//         brandName = brand;
+//       }
+//     }
+
+//     // Store old values for count updates
+//     const oldCategory = product.category.toString();
+//     const oldSubcategoryId = product.subcategory ? product.subcategory.toString() : null;
+//     const oldChildSubcategoryId = product.childSubcategory ? product.childSubcategory.toString() : null;
+
+//     const newCategory = category || oldCategory;
+//     let newSubcategoryId = subcategory || null;
+//     let newSubcategoryName = '';
+//     let newChildSubcategoryId = childSubcategory || null;
+//     let newChildSubcategoryName = '';
+
+//     if (category && category !== oldCategory) {
+//       const categoryExists = await Category.findById(category);
+//       if (!categoryExists) {
+//         return res.status(400).json({ success: false, error: 'Invalid category' });
+//       }
+//     }
+
+//     if (newSubcategoryId) {
+//       const categoryDoc = await Category.findById(newCategory);
+//       if (categoryDoc) {
+//         const subcategoryDoc = categoryDoc.subcategories.id(newSubcategoryId);
+//         if (subcategoryDoc) {
+//           newSubcategoryName = subcategoryDoc.name;
+
+//           if (newChildSubcategoryId) {
+//             const childDoc = subcategoryDoc.children.id(newChildSubcategoryId);
+//             if (childDoc) {
+//               newChildSubcategoryName = childDoc.name;
+//             }
+//           }
+//         }
+//       }
+//     }
+
+//     // Process images if provided
+//     let processedImages = product.images;
+//     if (images && Array.isArray(images) && images.length > 0) {
+//       processedImages = images.map((url, index) => ({
+//         url: url,
+//         publicId: extractPublicIdFromUrl(url),
+//         isPrimary: index === 0
+//       }));
+//     }
+
+//     // Process additional info
+//     let processedAdditionalInfo = product.additionalInfo;
+//     if (additionalInfo && Array.isArray(additionalInfo)) {
+//       processedAdditionalInfo = additionalInfo;
+//     }
+
+//     // Process FAQs
+//     let processedFaqs = product.faqs || [];
+//     if (faqs !== undefined) {
+//       if (Array.isArray(faqs)) {
+//         processedFaqs = faqs.filter(faq =>
+//           faq.question && faq.question.trim() &&
+//           faq.answer && faq.answer.trim()
+//         );
+//       } else {
+//         processedFaqs = [];
+//       }
+//     }
+
+//     // Process meta settings
+//     let processedMetaSettings = product.metaSettings;
+//     if (metaSettings) {
+//       processedMetaSettings = {
+//         metaTitle: metaSettings.metaTitle || product.metaSettings?.metaTitle || '',
+//         metaDescription: metaSettings.metaDescription || product.metaSettings?.metaDescription || '',
+//         metaKeywords: metaSettings.metaKeywords || product.metaSettings?.metaKeywords || []
+//       };
+//     }
+
+//     // Validate tags (only one tag)
+//     if (tags && tags.length > 1) {
+//       return res.status(400).json({
+//         success: false,
+//         error: 'Only one tag can be selected per product'
+//       });
+//     }
+
+//     // ============================================
+//     // PROCESS VARIANTS
+//     // ============================================
+//     let processedVariants = product.variantTypes || [];
+//     let finalHasVariants = hasVariants !== undefined ? hasVariants : product.hasVariants;
+
+//     if (variants !== undefined && Array.isArray(variants)) {
+//       if (variants.length > 0) {
+//         finalHasVariants = true;
+
+//         let idCounter = 0;
+
+//         processedVariants = variants.map(vt => {
+//           const processedVariantType = {
+//             id: vt.id || `${Date.now()}_${idCounter++}_${Math.random().toString(36).substr(2, 6)}`,
+//             type: vt.type,
+//             variants: []
+//           };
+
+//           if (vt.variants && Array.isArray(vt.variants)) {
+//             processedVariantType.variants = vt.variants.map(v => {
+//               const variant = {
+//                 id: v.id || `${Date.now()}_${idCounter++}_${Math.random().toString(36).substr(2, 6)}`,
+//                 name: v.name || '',
+//                 color: v.color || '',
+//                 regularPrice: Number(v.regularPrice) || 0,
+//                 discountPrice: Number(v.discountPrice) || 0,
+//                 buyingPrice: Number(v.buyingPrice) || 0,
+//                 packagingCost: Number(v.packagingCost) || 0,
+//                 deliveryCost: Number(v.deliveryCost) || 0,
+//                 costPerItem: 0,
+//                 stockQuantity: Number(v.stockQuantity) || 0,
+//                 images: v.images || [null, null, null, null],
+//                 imagePreviews: v.imagePreviews || [null, null, null, null],
+//                 subVariants: []
+//               };
+
+//               variant.costPerItem = variant.buyingPrice + variant.packagingCost + variant.deliveryCost;
+
+//               if (v.subVariants && Array.isArray(v.subVariants)) {
+//                 variant.subVariants = v.subVariants.map(sv => ({
+//                   id: sv.id || `${Date.now()}_${idCounter++}_${Math.random().toString(36).substr(2, 6)}`,
+//                   name: sv.name || '',
+//                   color: sv.color || '',
+//                   regularPrice: Number(sv.regularPrice) || 0,
+//                   discountPrice: Number(sv.discountPrice) || 0,
+//                   buyingPrice: Number(sv.buyingPrice) || 0,
+//                   packagingCost: Number(sv.packagingCost) || 0,
+//                   deliveryCost: Number(sv.deliveryCost) || 0,
+//                   costPerItem: 0,
+//                   stockQuantity: Number(sv.stockQuantity) || 0,
+//                   images: sv.images || [null, null, null, null],
+//                   imagePreviews: sv.imagePreviews || [null, null, null, null]
+//                 }));
+
+//                 variant.subVariants.forEach(sv => {
+//                   sv.costPerItem = sv.buyingPrice + sv.packagingCost + sv.deliveryCost;
+//                 });
+//               }
+
+//               return variant;
+//             });
+//           }
+
+//           return processedVariantType;
+//         });
+//       } else {
+//         finalHasVariants = false;
+//         processedVariants = [];
+//       }
+//     }
+
+//     // ============================================
+//     // PROCESS ADD-ONES
+//     // ============================================
+//     let processedAddOnes = product.addOnes || [];
+//     if (addOnes !== undefined) {
+//       if (Array.isArray(addOnes) && addOnes.length > 0) {
+//         const addOnProductIds = addOnes.map(id => new mongoose.Types.ObjectId(id));
+
+//         const addOnProducts = await Product.find({
+//           _id: { $in: addOnProductIds },
+//           isActive: true
+//         }).select('productName slug regularPrice discountPrice images brand skuCode stockQuantity');
+
+//         processedAddOnes = addOnProducts.map(p => ({
+//           productId: p._id,
+//           productName: p.productName,
+//           slug: p.slug,
+//           regularPrice: p.regularPrice,
+//           discountPrice: p.discountPrice || 0,
+//           images: p.images || [],
+//           brand: p.brand || '',
+//           skuCode: p.skuCode || '',
+//           stockQuantity: p.stockQuantity || 0
+//         }));
+//       } else {
+//         processedAddOnes = [];
+//       }
+//     }
+
+//     // ============================================
+//     // UPDATE PRODUCT FIELDS
+//     // ============================================
+//     if (productName) product.productName = productName;
+//     if (slug !== undefined) product.slug = finalSlug;
+//     if (shortDescription !== undefined) product.shortDescription = shortDescription || '';
+//     if (fullDescription && fullDescription !== '<p></p>') product.fullDescription = fullDescription;
+//     if (brandName !== undefined) product.brand = brandName || '';
+//     if (stockQuantity !== undefined) product.stockQuantity = stockQuantity;
+//     if (stockAlertQuantity !== undefined) product.stockAlertQuantity = stockAlertQuantity || 0;
+//     if (skuCode) product.skuCode = skuCode;
+//     if (regularPrice !== undefined) product.regularPrice = regularPrice;
+
+//     product.costPerItem = calculatedCostPerItem;
+
+//     if (discountPrice !== undefined) product.discountPrice = discountPrice;
+//     if (buyingPrice !== undefined) product.buyingPrice = finalBuyingPrice;
+//     if (packagingCost !== undefined) product.packagingCost = finalPackagingCost;
+//     if (deliveryCost !== undefined) product.deliveryCost = finalDeliveryCost;
+//     if (unit) product.unit = unit;
+//     if (customUnit !== undefined) product.customUnit = customUnit || '';
+//     if (colors !== undefined) product.colors = colors || [];
+//     if (deliveryInfo !== undefined) product.deliveryInfo = deliveryInfo || '';
+//     if (tags) product.tags = tags;
+//     if (isFeatured !== undefined) product.isFeatured = isFeatured;
+//     if (showOnBanner !== undefined) product.showOnBanner = showOnBanner;
+//     if (comingSoon !== undefined) product.comingSoon = comingSoon;
+//     if (isActive !== undefined) product.isActive = isActive;
+//     if (rating !== undefined) product.rating = rating;
+//     if (additionalInfo) product.additionalInfo = processedAdditionalInfo;
+//     if (faqs !== undefined) product.faqs = processedFaqs;
+//     if (metaSettings) product.metaSettings = processedMetaSettings;
+//     if (images && Array.isArray(images) && images.length > 0) product.images = processedImages;
+//     if (videoUrl !== undefined) product.videoUrl = videoUrl || '';
+//     if (videoPublicId !== undefined) product.videoPublicId = videoPublicId || '';
+//     if (videoType !== undefined) product.videoType = videoType || 'upload';
+
+//     product.hasVariants = finalHasVariants;
+//     product.variantTypes = processedVariants;
+//     product.addOnes = processedAddOnes;
+
+//     // Tracking
+//     product.updatedBy = req.user.id;
+//     product.lastUpdatedAt = new Date();
+
+//     // ============================================
+//     // HANDLE BARCODE UPDATE
+//     // ============================================
+//     if (shouldUpdateBarcode) {
+//       // Release old barcode
+//       if (product.barcode && product.barcode !== newBarcode) {
+//         await releaseBarcodeFromProduct(product.barcode);
+//       }
+
+//       // Assign new barcode
+//       if (newBarcode) {
+//         product.barcode = newBarcode;
+//       } else {
+//         product.barcode = undefined;
+//       }
+//     }
+
+//     // Update category if changed
+//     if (category && category !== oldCategory) {
+//       product.category = category;
+//       const categoryExists = await Category.findById(category);
+//       if (categoryExists) {
+//         product.categoryName = categoryExists.name;
+//       }
+//       product.subcategory = newSubcategoryId;
+//       product.subcategoryName = newSubcategoryName;
+//       product.childSubcategory = newChildSubcategoryId;
+//       product.childSubcategoryName = newChildSubcategoryName;
+//     } else {
+//       if (subcategory !== undefined) {
+//         product.subcategory = newSubcategoryId;
+//         product.subcategoryName = newSubcategoryName;
+//       }
+//       if (childSubcategory !== undefined) {
+//         product.childSubcategory = newChildSubcategoryId;
+//         product.childSubcategoryName = newChildSubcategoryName;
+//       }
+//     }
+
+//     await product.save();
+
+
+//     // ============================================
+// // LOG STOCK INCREASE FROM EDIT (if any)
+// // ============================================
+// try {
+//   const newBaseStock = Number(product.stockQuantity) || 0;
+//   const diff = newBaseStock - previousBaseStock;
+
+//   if (diff > 0) {
+//     await RestockLog.create({
+//       productId: product._id,
+//       productName: product.productName,
+//       skuCode: product.skuCode || '',
+//       barcode: product.barcode || '',
+//       variantId: null,
+//       subVariantId: null,
+//       variantName: '',
+//       subVariantName: '',
+//       addQuantity: diff,
+//       previousStock: previousBaseStock,
+//       newStock: newBaseStock,
+//       restockedBy: req.user.id,
+//       restockedByName: req.user.name || '',
+//       restockedByEmail: req.user.email || '',
+//       restockedByRole: req.user.role || '',
+//       restockedAt: new Date(),
+//       source: 'edit'
+//     });
+//   }
+// } catch (logErr) {
+//   console.error('Restock log (edit) error:', logErr);
+// }
+
+//     // ============================================
+//     // ASSIGN NEW BARCODE AFTER SAVE
+//     // ============================================
+//     if (shouldUpdateBarcode && newBarcode) {
+//       await assignBarcodeToProduct(newBarcode, product, req.user.id);
+//     }
+
+//     // ============================================
+//     // UPDATE EMBEDDED PRODUCT IN CATEGORY
+//     // ============================================
+//     const embeddedUpdateData = {
+//       productName: product.productName,
+//       slug: product.slug,
+//       shortDescription: product.shortDescription,
+//       fullDescription: product.fullDescription,
+//       brand: product.brand || '',
+//       images: processedImages,
+//       regularPrice: product.regularPrice,
+//       discountPrice: product.discountPrice,
+//       costPerItem: product.costPerItem,
+//       buyingPrice: product.buyingPrice || 0,
+//       packagingCost: product.packagingCost || 0,
+//       deliveryCost: product.deliveryCost || 0,
+//       stockQuantity: product.stockQuantity,
+//       stockAlertQuantity: product.stockAlertQuantity,
+//       skuCode: product.skuCode,
+//       unit: product.unit,
+//       colors: product.colors,
+//       deliveryInfo: product.deliveryInfo,
+//       tags: product.tags,
+//       isFeatured: product.isFeatured,
+//       showOnBanner: product.showOnBanner,
+//       comingSoon: product.comingSoon || false,
+//       isActive: product.isActive,
+//       rating: product.rating,
+//       additionalInfo: processedAdditionalInfo,
+//       faqs: processedFaqs,
+//       subcategoryId: product.subcategory,
+//       subcategoryName: product.subcategoryName,
+//       childSubcategoryId: product.childSubcategory,
+//       childSubcategoryName: product.childSubcategoryName,
+//       updatedBy: req.user.id,
+//       lastUpdatedAt: new Date(),
+//       updatedAt: new Date()
+//     };
+
+//     // Handle category change
+//     if (category && category !== oldCategory) {
+//       await Category.findByIdAndUpdate(
+//         oldCategory,
+//         {
+//           $pull: { products: { productId: product._id } },
+//           $inc: { productCount: -1 }
+//         }
+//       );
+
+//       if (oldSubcategoryId) {
+//         await Category.findOneAndUpdate(
+//           {
+//             _id: oldCategory,
+//             'subcategories._id': oldSubcategoryId
+//           },
+//           { $inc: { 'subcategories.$.productCount': -1 } }
+//         );
+//       }
+
+//       if (oldChildSubcategoryId && oldSubcategoryId) {
+//         await Category.findOneAndUpdate(
+//           {
+//             _id: oldCategory,
+//             'subcategories._id': oldSubcategoryId,
+//             'subcategories.children._id': oldChildSubcategoryId
+//           },
+//           { $inc: { 'subcategories.$[sub].children.$[child].productCount': -1 } },
+//           {
+//             arrayFilters: [
+//               { 'sub._id': oldSubcategoryId },
+//               { 'child._id': oldChildSubcategoryId }
+//             ]
+//           }
+//         );
+//       }
+
+//       const newEmbeddedProduct = {
+//         productId: product._id,
+//         ...embeddedUpdateData,
+//         createdBy: req.user.id,
+//         createdAt: product.createdAt
+//       };
+
+//       await Category.findByIdAndUpdate(
+//         newCategory,
+//         {
+//           $push: { products: newEmbeddedProduct },
+//           $inc: { productCount: 1 }
+//         }
+//       );
+
+//       if (newSubcategoryId) {
+//         await Category.findOneAndUpdate(
+//           {
+//             _id: newCategory,
+//             'subcategories._id': newSubcategoryId
+//           },
+//           { $inc: { 'subcategories.$.productCount': 1 } }
+//         );
+//       }
+
+//       if (newChildSubcategoryId && newSubcategoryId) {
+//         await Category.findOneAndUpdate(
+//           {
+//             _id: newCategory,
+//             'subcategories._id': newSubcategoryId,
+//             'subcategories.children._id': newChildSubcategoryId
+//           },
+//           { $inc: { 'subcategories.$[sub].children.$[child].productCount': 1 } },
+//           {
+//             arrayFilters: [
+//               { 'sub._id': newSubcategoryId },
+//               { 'child._id': newChildSubcategoryId }
+//             ]
+//           }
+//         );
+//       }
+//     } else {
+//       await updateEmbeddedProductInCategory(oldCategory, product._id, embeddedUpdateData);
+
+//       if (oldSubcategoryId !== newSubcategoryId) {
+//         if (oldSubcategoryId) {
+//           await Category.findOneAndUpdate(
+//             {
+//               _id: oldCategory,
+//               'subcategories._id': oldSubcategoryId
+//             },
+//             { $inc: { 'subcategories.$.productCount': -1 } }
+//           );
+//         }
+//         if (newSubcategoryId) {
+//           await Category.findOneAndUpdate(
+//             {
+//               _id: oldCategory,
+//               'subcategories._id': newSubcategoryId
+//             },
+//             { $inc: { 'subcategories.$.productCount': 1 } }
+//           );
+//         }
+//       }
+
+//       if (oldChildSubcategoryId !== newChildSubcategoryId) {
+//         if (oldChildSubcategoryId && oldSubcategoryId) {
+//           await Category.findOneAndUpdate(
+//             {
+//               _id: oldCategory,
+//               'subcategories._id': oldSubcategoryId,
+//               'subcategories.children._id': oldChildSubcategoryId
+//             },
+//             { $inc: { 'subcategories.$[sub].children.$[child].productCount': -1 } },
+//             {
+//               arrayFilters: [
+//                 { 'sub._id': oldSubcategoryId },
+//                 { 'child._id': oldChildSubcategoryId }
+//               ]
+//             }
+//           );
+//         }
+//         if (newChildSubcategoryId && newSubcategoryId) {
+//           await Category.findOneAndUpdate(
+//             {
+//               _id: oldCategory,
+//               'subcategories._id': newSubcategoryId,
+//               'subcategories.children._id': newChildSubcategoryId
+//             },
+//             { $inc: { 'subcategories.$[sub].children.$[child].productCount': 1 } },
+//             {
+//               arrayFilters: [
+//                 { 'sub._id': newSubcategoryId },
+//                 { 'child._id': newChildSubcategoryId }
+//               ]
+//             }
+//           );
+//         }
+//       }
+//     }
+
+//     // Populate references for response
+//     await product.populate([
+//       { path: 'category', select: 'name slug' },
+//       { path: 'tags', select: 'name image' },
+//       { path: 'createdBy', select: 'name email role' },
+//       { path: 'updatedBy', select: 'name email role' },
+//       { path: 'addOnes.productId', select: 'productName slug regularPrice discountPrice images brand skuCode stockQuantity' }
+//     ]);
+
+//     res.json({
+//       success: true,
+//       data: product,
+//       message: 'Product updated successfully'
+//     });
+
+//   } catch (error) {
+//     console.error('Update product error:', error);
+//     res.status(500).json({
+//       success: false,
+//       error: error.message || 'Server error while updating product'
+//     });
+//   }
+// };
+
+// ============================================================
+// UPDATE PRODUCT
+// ============================================================
 const updateProduct = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
@@ -1139,6 +1824,43 @@ const updateProduct = async (req, res) => {
     if (!product) {
       return res.status(404).json({ success: false, error: 'Product not found' });
     }
+
+    // ✅ Capture base stock BEFORE mutation
+    const previousBaseStock = Number(product.stockQuantity) || 0;
+
+    // ✅ Snapshot variant + sub-variant stocks BEFORE mutation
+    // Key format:
+    //   v:<variantId>                → variant-level stock
+    //   s:<variantId>:<subVariantId> → sub-variant-level stock
+    const previousStockSnapshots = new Map();
+
+    (product.variantTypes || []).forEach((vt) => {
+      (vt.variants || []).forEach((v) => {
+        const vId = v.id || (v._id ? v._id.toString() : null);
+        if (!vId) return;
+
+        previousStockSnapshots.set(`v:${vId}`, {
+          stock: Number(v.stockQuantity) || 0,
+          variantName: v.name || '',
+          subVariantName: '',
+          skuCode: v.skuCode || '',
+          barcode: v.barcode || '',
+        });
+
+        (v.subVariants || []).forEach((sv) => {
+          const svId = sv.id || (sv._id ? sv._id.toString() : null);
+          if (!svId) return;
+
+          previousStockSnapshots.set(`s:${vId}:${svId}`, {
+            stock: Number(sv.stockQuantity) || 0,
+            variantName: v.name || '',
+            subVariantName: sv.name || '',
+            skuCode: sv.skuCode || '',
+            barcode: sv.barcode || '',
+          });
+        });
+      });
+    });
 
     if (!['super_admin', 'admin', 'moderator'].includes(req.user.role)) {
       return res.status(403).json({
@@ -1187,9 +1909,6 @@ const updateProduct = async (req, res) => {
       addOnes
     } = req.body;
 
-    // ============================================
-    // BUYING PRICE - Only super_admin and admin can update
-    // ============================================
     let finalBuyingPrice = product.buyingPrice || 0;
     if (req.user.role === 'super_admin' || req.user.role === 'admin') {
       if (buyingPrice !== undefined) {
@@ -1207,12 +1926,9 @@ const updateProduct = async (req, res) => {
       finalDeliveryCost = deliveryCost ? Number(deliveryCost) : 0;
     }
 
-    // Auto-calculate cost per item
-    const calculatedCostPerItem = finalBuyingPrice + finalPackagingCost + finalDeliveryCost;
+    const calculatedCostPerItem =
+      finalBuyingPrice + finalPackagingCost + finalDeliveryCost;
 
-    // ============================================
-    // SLUG VALIDATION
-    // ============================================
     let finalSlug = product.slug;
     if (slug !== undefined && slug !== product.slug) {
       if (slug) {
@@ -1239,9 +1955,6 @@ const updateProduct = async (req, res) => {
       }
     }
 
-    // ============================================
-    // BARCODE VALIDATION
-    // ============================================
     let newBarcode = product.barcode;
     let shouldUpdateBarcode = false;
 
@@ -1251,7 +1964,6 @@ const updateProduct = async (req, res) => {
       if (barcode === '' || barcode === null) {
         newBarcode = undefined;
       } else {
-        // Validate format
         if (!/^[0-9]{8,13}$/.test(barcode)) {
           return res.status(400).json({
             success: false,
@@ -1259,7 +1971,6 @@ const updateProduct = async (req, res) => {
           });
         }
 
-        // Check if barcode is used by another product
         const existingProductWithBarcode = await Product.findOne({
           barcode: barcode,
           _id: { $ne: product._id }
@@ -1271,9 +1982,12 @@ const updateProduct = async (req, res) => {
           });
         }
 
-        // Check Barcode collection
         const barcodeDoc = await Barcode.findOne({ barcodeNumber: barcode });
-        if (barcodeDoc && barcodeDoc.status === 'assigned' && barcodeDoc.productId?.toString() !== product._id.toString()) {
+        if (
+          barcodeDoc &&
+          barcodeDoc.status === 'assigned' &&
+          barcodeDoc.productId?.toString() !== product._id.toString()
+        ) {
           return res.status(400).json({
             success: false,
             error: `Barcode "${barcode}" is already assigned to another product`
@@ -1284,7 +1998,6 @@ const updateProduct = async (req, res) => {
       }
     }
 
-    // Get brand name from brand ID (if provided)
     let brandName = brand;
     if (brand && mongoose.Types.ObjectId.isValid(brand)) {
       try {
@@ -1301,7 +2014,6 @@ const updateProduct = async (req, res) => {
       }
     }
 
-    // Store old values for count updates
     const oldCategory = product.category.toString();
     const oldSubcategoryId = product.subcategory ? product.subcategory.toString() : null;
     const oldChildSubcategoryId = product.childSubcategory ? product.childSubcategory.toString() : null;
@@ -1336,7 +2048,6 @@ const updateProduct = async (req, res) => {
       }
     }
 
-    // Process images if provided
     let processedImages = product.images;
     if (images && Array.isArray(images) && images.length > 0) {
       processedImages = images.map((url, index) => ({
@@ -1346,26 +2057,22 @@ const updateProduct = async (req, res) => {
       }));
     }
 
-    // Process additional info
     let processedAdditionalInfo = product.additionalInfo;
     if (additionalInfo && Array.isArray(additionalInfo)) {
       processedAdditionalInfo = additionalInfo;
     }
 
-    // Process FAQs
     let processedFaqs = product.faqs || [];
     if (faqs !== undefined) {
       if (Array.isArray(faqs)) {
-        processedFaqs = faqs.filter(faq =>
-          faq.question && faq.question.trim() &&
-          faq.answer && faq.answer.trim()
+        processedFaqs = faqs.filter(
+          faq => faq.question && faq.question.trim() && faq.answer && faq.answer.trim()
         );
       } else {
         processedFaqs = [];
       }
     }
 
-    // Process meta settings
     let processedMetaSettings = product.metaSettings;
     if (metaSettings) {
       processedMetaSettings = {
@@ -1375,7 +2082,6 @@ const updateProduct = async (req, res) => {
       };
     }
 
-    // Validate tags (only one tag)
     if (tags && tags.length > 1) {
       return res.status(400).json({
         success: false,
@@ -1392,7 +2098,6 @@ const updateProduct = async (req, res) => {
     if (variants !== undefined && Array.isArray(variants)) {
       if (variants.length > 0) {
         finalHasVariants = true;
-
         let idCounter = 0;
 
         processedVariants = variants.map(vt => {
@@ -1420,7 +2125,8 @@ const updateProduct = async (req, res) => {
                 subVariants: []
               };
 
-              variant.costPerItem = variant.buyingPrice + variant.packagingCost + variant.deliveryCost;
+              variant.costPerItem =
+                variant.buyingPrice + variant.packagingCost + variant.deliveryCost;
 
               if (v.subVariants && Array.isArray(v.subVariants)) {
                 variant.subVariants = v.subVariants.map(sv => ({
@@ -1525,20 +2231,14 @@ const updateProduct = async (req, res) => {
     product.variantTypes = processedVariants;
     product.addOnes = processedAddOnes;
 
-    // Tracking
     product.updatedBy = req.user.id;
     product.lastUpdatedAt = new Date();
 
-    // ============================================
-    // HANDLE BARCODE UPDATE
-    // ============================================
     if (shouldUpdateBarcode) {
-      // Release old barcode
       if (product.barcode && product.barcode !== newBarcode) {
         await releaseBarcodeFromProduct(product.barcode);
       }
 
-      // Assign new barcode
       if (newBarcode) {
         product.barcode = newBarcode;
       } else {
@@ -1546,7 +2246,6 @@ const updateProduct = async (req, res) => {
       }
     }
 
-    // Update category if changed
     if (category && category !== oldCategory) {
       product.category = category;
       const categoryExists = await Category.findById(category);
@@ -1571,15 +2270,131 @@ const updateProduct = async (req, res) => {
     await product.save();
 
     // ============================================
-    // ASSIGN NEW BARCODE AFTER SAVE
+    // ✅ LOG STOCK INCREASES FROM EDIT (base + variants + sub-variants)
     // ============================================
+    try {
+      const logsToInsert = [];
+
+      // ---- Base product ----
+      const newBaseStock = Number(product.stockQuantity) || 0;
+      const baseDiff = newBaseStock - previousBaseStock;
+      if (baseDiff > 0) {
+        logsToInsert.push({
+          productId: product._id,
+          productName: product.productName,
+          skuCode: product.skuCode || '',
+          barcode: product.barcode || '',
+          variantId: null,
+          subVariantId: null,
+          variantName: '',
+          subVariantName: '',
+          addQuantity: baseDiff,
+          previousStock: previousBaseStock,
+          newStock: newBaseStock,
+          restockedBy: req.user.id,
+          restockedByName: req.user.name || '',
+          restockedByEmail: req.user.email || '',
+          restockedByRole: req.user.role || '',
+          restockedAt: new Date(),
+          source: 'edit',
+        });
+      }
+
+      // ---- Variants + sub-variants ----
+      (product.variantTypes || []).forEach((vt) => {
+        (vt.variants || []).forEach((v) => {
+          const vId = v.id || (v._id ? v._id.toString() : null);
+          if (!vId) return;
+
+          const newVStock = Number(v.stockQuantity) || 0;
+          const prevV = previousStockSnapshots.get(`v:${vId}`);
+
+          if (prevV) {
+            const diff = newVStock - prevV.stock;
+            if (diff > 0) {
+              logsToInsert.push({
+                productId: product._id,
+                productName: product.productName,
+                skuCode: v.skuCode || product.skuCode || '',
+                barcode: v.barcode || product.barcode || '',
+                variantId: vId,
+                subVariantId: null,
+                variantName: v.name || '',
+                subVariantName: '',
+                addQuantity: diff,
+                previousStock: prevV.stock,
+                newStock: newVStock,
+                restockedBy: req.user.id,
+                restockedByName: req.user.name || '',
+                restockedByEmail: req.user.email || '',
+                restockedByRole: req.user.role || '',
+                restockedAt: new Date(),
+                source: 'edit',
+              });
+            }
+          }
+
+          (v.subVariants || []).forEach((sv) => {
+            const svId = sv.id || (sv._id ? sv._id.toString() : null);
+            if (!svId) return;
+
+            const newSvStock = Number(sv.stockQuantity) || 0;
+            const prevSv = previousStockSnapshots.get(`s:${vId}:${svId}`);
+
+            if (prevSv) {
+              const diff = newSvStock - prevSv.stock;
+              if (diff > 0) {
+                logsToInsert.push({
+                  productId: product._id,
+                  productName: product.productName,
+                  skuCode: sv.skuCode || v.skuCode || product.skuCode || '',
+                  barcode: sv.barcode || v.barcode || product.barcode || '',
+                  variantId: vId,
+                  subVariantId: svId,
+                  variantName: v.name || '',
+                  subVariantName: sv.name || '',
+                  addQuantity: diff,
+                  previousStock: prevSv.stock,
+                  newStock: newSvStock,
+                  restockedBy: req.user.id,
+                  restockedByName: req.user.name || '',
+                  restockedByEmail: req.user.email || '',
+                  restockedByRole: req.user.role || '',
+                  restockedAt: new Date(),
+                  source: 'edit',
+                });
+              }
+            }
+          });
+        });
+      });
+
+      if (logsToInsert.length > 0) {
+        try {
+          await RestockLog.insertMany(logsToInsert, { ordered: false });
+        } catch (insertErr) {
+          // insertMany with ordered:false continues on duplicate key errors
+          if (insertErr.writeErrors) {
+            insertErr.writeErrors.forEach((we) => {
+              if (we.err?.code === 11000) {
+                console.warn('Duplicate edit log skipped');
+              } else {
+                console.error('Edit log insert error:', we.err);
+              }
+            });
+          } else {
+            console.error('Restock log (edit, insertMany) error:', insertErr);
+          }
+        }
+      }
+    } catch (logErr) {
+      console.error('Restock log (edit) outer error:', logErr);
+    }
+
     if (shouldUpdateBarcode && newBarcode) {
       await assignBarcodeToProduct(newBarcode, product, req.user.id);
     }
 
-    // ============================================
-    // UPDATE EMBEDDED PRODUCT IN CATEGORY
-    // ============================================
     const embeddedUpdateData = {
       productName: product.productName,
       slug: product.slug,
@@ -1616,22 +2431,15 @@ const updateProduct = async (req, res) => {
       updatedAt: new Date()
     };
 
-    // Handle category change
     if (category && category !== oldCategory) {
-      await Category.findByIdAndUpdate(
-        oldCategory,
-        {
-          $pull: { products: { productId: product._id } },
-          $inc: { productCount: -1 }
-        }
-      );
+      await Category.findByIdAndUpdate(oldCategory, {
+        $pull: { products: { productId: product._id } },
+        $inc: { productCount: -1 }
+      });
 
       if (oldSubcategoryId) {
         await Category.findOneAndUpdate(
-          {
-            _id: oldCategory,
-            'subcategories._id': oldSubcategoryId
-          },
+          { _id: oldCategory, 'subcategories._id': oldSubcategoryId },
           { $inc: { 'subcategories.$.productCount': -1 } }
         );
       }
@@ -1660,20 +2468,14 @@ const updateProduct = async (req, res) => {
         createdAt: product.createdAt
       };
 
-      await Category.findByIdAndUpdate(
-        newCategory,
-        {
-          $push: { products: newEmbeddedProduct },
-          $inc: { productCount: 1 }
-        }
-      );
+      await Category.findByIdAndUpdate(newCategory, {
+        $push: { products: newEmbeddedProduct },
+        $inc: { productCount: 1 }
+      });
 
       if (newSubcategoryId) {
         await Category.findOneAndUpdate(
-          {
-            _id: newCategory,
-            'subcategories._id': newSubcategoryId
-          },
+          { _id: newCategory, 'subcategories._id': newSubcategoryId },
           { $inc: { 'subcategories.$.productCount': 1 } }
         );
       }
@@ -1700,19 +2502,13 @@ const updateProduct = async (req, res) => {
       if (oldSubcategoryId !== newSubcategoryId) {
         if (oldSubcategoryId) {
           await Category.findOneAndUpdate(
-            {
-              _id: oldCategory,
-              'subcategories._id': oldSubcategoryId
-            },
+            { _id: oldCategory, 'subcategories._id': oldSubcategoryId },
             { $inc: { 'subcategories.$.productCount': -1 } }
           );
         }
         if (newSubcategoryId) {
           await Category.findOneAndUpdate(
-            {
-              _id: oldCategory,
-              'subcategories._id': newSubcategoryId
-            },
+            { _id: oldCategory, 'subcategories._id': newSubcategoryId },
             { $inc: { 'subcategories.$.productCount': 1 } }
           );
         }
@@ -1738,7 +2534,7 @@ const updateProduct = async (req, res) => {
         if (newChildSubcategoryId && newSubcategoryId) {
           await Category.findOneAndUpdate(
             {
-              _id: oldCategory,
+              _id: newCategory,
               'subcategories._id': newSubcategoryId,
               'subcategories.children._id': newChildSubcategoryId
             },
@@ -1754,7 +2550,6 @@ const updateProduct = async (req, res) => {
       }
     }
 
-    // Populate references for response
     await product.populate([
       { path: 'category', select: 'name slug' },
       { path: 'tags', select: 'name image' },
@@ -2566,9 +3361,10 @@ const duplicateProduct = async (req, res) => {
   }
 };
 
-// ============================================================
-// BULK RESTOCK
-// ============================================================
+
+
+
+
 // const restockBulk = async (req, res) => {
 //   try {
 //     const { items } = req.body;
@@ -2600,11 +3396,49 @@ const duplicateProduct = async (req, res) => {
 //           continue;
 //         }
 
+//         // ---------- Resolve names for log (before mutation) ----------
+//         let logVariantName = '';
+//         let logSubVariantName = '';
+//         let logSkuCode = product.skuCode || '';
+//         let logBarcode = product.barcode || '';
+
+//         if (variantId) {
+//           for (const vt of product.variantTypes || []) {
+//             for (const v of vt.variants || []) {
+//               const vId = v.id || (v._id ? v._id.toString() : null);
+//               if (vId === variantId) {
+//                 logVariantName = v.name || '';
+
+//                 // Prefer variant-level sku/barcode when present
+//                 if (v.skuCode) logSkuCode = v.skuCode;
+//                 if (v.barcode) logBarcode = v.barcode;
+
+//                 if (subVariantId) {
+//                   for (const sv of v.subVariants || []) {
+//                     const svId = sv.id || (sv._id ? sv._id.toString() : null);
+//                     if (svId === subVariantId) {
+//                       logSubVariantName = sv.name || '';
+//                       if (sv.skuCode) logSkuCode = sv.skuCode;
+//                       if (sv.barcode) logBarcode = sv.barcode;
+//                       break;
+//                     }
+//                   }
+//                 }
+//                 break;
+//               }
+//             }
+//             if (logVariantName) break;
+//           }
+//         }
+
+//         // ---------- Capture previous stock for the log ----------
+//         let previousStock = 0;
 //         let newStock = 0;
 
 //         // ----------- BASE PRODUCT -----------
 //         if (!variantId && !subVariantId) {
-//           product.stockQuantity = (Number(product.stockQuantity) || 0) + add;
+//           previousStock = Number(product.stockQuantity) || 0;
+//           product.stockQuantity = previousStock + add;
 //           newStock = product.stockQuantity;
 //         }
 //         // ----------- VARIANT -----------
@@ -2614,7 +3448,8 @@ const duplicateProduct = async (req, res) => {
 //             for (const v of vt.variants || []) {
 //               const vId = v.id || (v._id ? v._id.toString() : null);
 //               if (vId === variantId) {
-//                 v.stockQuantity = (Number(v.stockQuantity) || 0) + add;
+//                 previousStock = Number(v.stockQuantity) || 0;
+//                 v.stockQuantity = previousStock + add;
 //                 newStock = v.stockQuantity;
 //                 found = true;
 //                 break;
@@ -2626,10 +3461,13 @@ const duplicateProduct = async (req, res) => {
 //             errors.push({ productId, variantId, error: 'Variant not found' });
 //             continue;
 //           }
+//           // ✅ Parent product stock also increases
+//           product.stockQuantity = (Number(product.stockQuantity) || 0) + add;
 //         }
 //         // ----------- SUB-VARIANT -----------
 //         else {
 //           let found = false;
+//           let parentVariant = null;
 //           for (const vt of product.variantTypes || []) {
 //             for (const v of vt.variants || []) {
 //               const vId = v.id || (v._id ? v._id.toString() : null);
@@ -2637,8 +3475,10 @@ const duplicateProduct = async (req, res) => {
 //                 for (const sv of v.subVariants || []) {
 //                   const svId = sv.id || (sv._id ? sv._id.toString() : null);
 //                   if (svId === subVariantId) {
-//                     sv.stockQuantity = (Number(sv.stockQuantity) || 0) + add;
+//                     previousStock = Number(sv.stockQuantity) || 0;
+//                     sv.stockQuantity = previousStock + add;
 //                     newStock = sv.stockQuantity;
+//                     parentVariant = v;
 //                     found = true;
 //                     break;
 //                   }
@@ -2652,6 +3492,13 @@ const duplicateProduct = async (req, res) => {
 //             errors.push({ productId, subVariantId, error: 'Sub-variant not found' });
 //             continue;
 //           }
+//           // ✅ Parent variant stock also increases
+//           if (parentVariant) {
+//             parentVariant.stockQuantity =
+//               (Number(parentVariant.stockQuantity) || 0) + add;
+//           }
+//           // ✅ Parent product stock also increases
+//           product.stockQuantity = (Number(product.stockQuantity) || 0) + add;
 //         }
 
 //         product.updatedBy = req.user.id;
@@ -2661,7 +3508,35 @@ const duplicateProduct = async (req, res) => {
 //         updatedCount++;
 //         results.push({ productId, variantId, subVariantId, newStock });
 
-//         // ✅ Sync embedded product in Category (best-effort)
+//         // ============================================
+//         // LOG THE RESTOCK
+//         // ============================================
+//         try {
+//           await RestockLog.create({
+//             productId: product._id,
+//             productName: product.productName,
+//             skuCode: logSkuCode,
+//             barcode: logBarcode,
+//             variantId: variantId || null,
+//             subVariantId: subVariantId || null,
+//             variantName: logVariantName,
+//             subVariantName: logSubVariantName,
+//             addQuantity: add,
+//             previousStock,
+//             newStock,
+//             restockedBy: req.user.id,
+//             restockedByName: req.user.name || '',
+//             restockedByEmail: req.user.email || '',
+//             restockedByRole: req.user.role || '',
+//             restockedAt: new Date(),
+//             source: (variantId || subVariantId) ? 'bulk' : 'scan'
+//           });
+//         } catch (logErr) {
+//           // Don't fail the restock if logging fails
+//           console.error('Restock log error:', logErr);
+//         }
+
+//         // Sync embedded category product (base stock)
 //         try {
 //           await Category.findOneAndUpdate(
 //             { _id: product.category, 'products.productId': product._id },
@@ -2690,9 +3565,12 @@ const duplicateProduct = async (req, res) => {
 //   }
 // };
 
+
+
+//working
 const restockBulk = async (req, res) => {
   try {
-    const { items } = req.body;
+    const { items, requestId } = req.body;
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ success: false, error: 'No items provided' });
@@ -2709,10 +3587,22 @@ const restockBulk = async (req, res) => {
     const errors = [];
     const results = [];
 
-    for (const item of items) {
+    for (const [index, item] of items.entries()) {
       const { productId, variantId, subVariantId, addQuantity } = item;
       const add = Math.max(0, parseInt(addQuantity, 10) || 0);
       if (!productId || add <= 0) continue;
+
+      // ✅ per-item idempotency key (one per request+index)
+      const idempotencyKey = requestId ? `${requestId}-${index}` : null;
+
+      // ✅ pre-check — skip already-processed items entirely
+      if (idempotencyKey) {
+        const alreadyProcessed = await RestockLog.findOne({ idempotencyKey });
+        if (alreadyProcessed) {
+          console.warn('Skipping already-processed item:', idempotencyKey);
+          continue;
+        }
+      }
 
       try {
         const product = await Product.findById(productId);
@@ -2721,11 +3611,49 @@ const restockBulk = async (req, res) => {
           continue;
         }
 
+        // ---------- Resolve names for log (before mutation) ----------
+        let logVariantName = '';
+        let logSubVariantName = '';
+        let logSkuCode = product.skuCode || '';
+        let logBarcode = product.barcode || '';
+
+        if (variantId) {
+          for (const vt of product.variantTypes || []) {
+            for (const v of vt.variants || []) {
+              const vId = v.id || (v._id ? v._id.toString() : null);
+              if (vId === variantId) {
+                logVariantName = v.name || '';
+
+                // Prefer variant-level sku/barcode when present
+                if (v.skuCode) logSkuCode = v.skuCode;
+                if (v.barcode) logBarcode = v.barcode;
+
+                if (subVariantId) {
+                  for (const sv of v.subVariants || []) {
+                    const svId = sv.id || (sv._id ? sv._id.toString() : null);
+                    if (svId === subVariantId) {
+                      logSubVariantName = sv.name || '';
+                      if (sv.skuCode) logSkuCode = sv.skuCode;
+                      if (sv.barcode) logBarcode = sv.barcode;
+                      break;
+                    }
+                  }
+                }
+                break;
+              }
+            }
+            if (logVariantName) break;
+          }
+        }
+
+        // ---------- Capture previous stock for the log ----------
+        let previousStock = 0;
         let newStock = 0;
 
         // ----------- BASE PRODUCT -----------
         if (!variantId && !subVariantId) {
-          product.stockQuantity = (Number(product.stockQuantity) || 0) + add;
+          previousStock = Number(product.stockQuantity) || 0;
+          product.stockQuantity = previousStock + add;
           newStock = product.stockQuantity;
         }
         // ----------- VARIANT -----------
@@ -2735,7 +3663,8 @@ const restockBulk = async (req, res) => {
             for (const v of vt.variants || []) {
               const vId = v.id || (v._id ? v._id.toString() : null);
               if (vId === variantId) {
-                v.stockQuantity = (Number(v.stockQuantity) || 0) + add;
+                previousStock = Number(v.stockQuantity) || 0;
+                v.stockQuantity = previousStock + add;
                 newStock = v.stockQuantity;
                 found = true;
                 break;
@@ -2761,7 +3690,8 @@ const restockBulk = async (req, res) => {
                 for (const sv of v.subVariants || []) {
                   const svId = sv.id || (sv._id ? sv._id.toString() : null);
                   if (svId === subVariantId) {
-                    sv.stockQuantity = (Number(sv.stockQuantity) || 0) + add;
+                    previousStock = Number(sv.stockQuantity) || 0;
+                    sv.stockQuantity = previousStock + add;
                     newStock = sv.stockQuantity;
                     parentVariant = v;
                     found = true;
@@ -2792,6 +3722,40 @@ const restockBulk = async (req, res) => {
 
         updatedCount++;
         results.push({ productId, variantId, subVariantId, newStock });
+
+        // ============================================
+        // LOG THE RESTOCK
+        // ============================================
+        try {
+          await RestockLog.create({
+            productId: product._id,
+            productName: product.productName,
+            skuCode: logSkuCode,
+            barcode: logBarcode,
+            variantId: variantId || null,
+            subVariantId: subVariantId || null,
+            variantName: logVariantName,
+            subVariantName: logSubVariantName,
+            addQuantity: add,
+            previousStock,
+            newStock,
+            restockedBy: req.user.id,
+            restockedByName: req.user.name || '',
+            restockedByEmail: req.user.email || '',
+            restockedByRole: req.user.role || '',
+            restockedAt: new Date(),
+            source: variantId || subVariantId ? 'bulk' : 'scan',
+            idempotencyKey, // ✅
+          });
+        } catch (logErr) {
+          if (logErr.code === 11000) {
+            // ✅ duplicate submission — the actual stock increment already happened
+            //    for this exact request, so just swallow the error.
+            console.warn('Duplicate restock request ignored:', idempotencyKey);
+          } else {
+            console.error('Restock log error:', logErr);
+          }
+        }
 
         // Sync embedded category product (base stock)
         try {
@@ -2837,6 +3801,397 @@ const getProductByBarcode = async (req, res) => {
 };
 
 // ============================================================
+// GET RESTOCK HISTORY FOR A PRODUCT
+// ============================================================
+const getProductRestockHistory = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { page = 1, limit = 20 } = req.query;
+
+    const RestockLog = require('../models/RestockLog');
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const [logs, total] = await Promise.all([
+      RestockLog.find({ productId: id })
+        .sort({ restockedAt: -1 })
+        .skip(skip)
+        .limit(parseInt(limit))
+        .populate('restockedBy', 'name email role')
+        .lean(),
+      RestockLog.countDocuments({ productId: id })
+    ]);
+
+    // Aggregate summary
+    const summary = await RestockLog.aggregate([
+      { $match: { productId: new (require('mongoose').Types.ObjectId)(id) } },
+      {
+        $group: {
+          _id: null,
+          totalRestocked: { $sum: '$addQuantity' },
+          totalEvents: { $sum: 1 },
+          lastRestock: { $max: '$restockedAt' }
+        }
+      }
+    ]);
+
+    res.json({
+      success: true,
+      data: logs,
+      summary: summary[0] || {
+        totalRestocked: 0,
+        totalEvents: 0,
+        lastRestock: null
+      },
+      pagination: {
+        total,
+        page: parseInt(page),
+        pages: Math.ceil(total / parseInt(limit)),
+        limit: parseInt(limit)
+      }
+    });
+  } catch (error) {
+    console.error('Get restock history error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+
+
+// const getAllRestockLogs = async (req, res) => {
+//   try {
+//     const {
+//       page = 1,
+//       limit = 20,
+//       productId,
+//       userId,
+//       from,
+//       to,
+//       search,
+//     } = req.query;
+
+//     // ---------- Build match stage ----------
+//     const match = {};
+//     if (productId) match.productId = new mongoose.Types.ObjectId(productId);
+//     if (userId) match.restockedBy = new mongoose.Types.ObjectId(userId);
+//     if (from || to) {
+//       match.restockedAt = {};
+//       if (from) match.restockedAt.$gte = new Date(from);
+//       if (to) {
+//         const end = new Date(to);
+//         end.setHours(23, 59, 59, 999);
+//         match.restockedAt.$lte = end;
+//       }
+//     }
+//     if (search && search.trim()) {
+//       const re = new RegExp(
+//         search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+//         'i'
+//       );
+//       match.$or = [
+//         { productName: re },
+//         { skuCode: re },
+//         { barcode: re },
+//         { restockedByEmail: re },
+//         { restockedByName: re },
+//       ];
+//     }
+
+//     const skip = (parseInt(page) - 1) * parseInt(limit);
+//     const limitNum = parseInt(limit);
+
+//     // ---------- Group by product (and variant) ----------
+//     const pipeline = [
+//       { $match: match },
+//       { $sort: { restockedAt: -1 } },
+//       {
+//         $group: {
+//           _id: {
+//             productId: '$productId',
+//             variantId: '$variantId',
+//             subVariantId: '$subVariantId',
+//           },
+//           productId: { $first: '$productId' },
+//           productName: { $first: '$productName' },
+//           skuCode: { $first: '$skuCode' },
+//           barcode: { $first: '$barcode' },
+//           variantId: { $first: '$variantId' },
+//           subVariantId: { $first: '$subVariantId' },
+//           variantName: { $first: '$variantName' },
+//           subVariantName: { $first: '$subVariantName' },
+//           // last restock (because we sorted desc, $first is the newest)
+//           addQuantity: { $first: '$addQuantity' },
+//           previousStock: { $first: '$previousStock' },
+//           newStock: { $first: '$newStock' },
+//           restockedAt: { $first: '$restockedAt' },
+//           restockedByName: { $first: '$restockedByName' },
+//           restockedByEmail: { $first: '$restockedByEmail' },
+//           source: { $first: '$source' },
+//           // aggregates across all events for this product
+//           totalRestocked: { $sum: '$addQuantity' },
+//           totalEvents: { $sum: 1 },
+//         },
+//       },
+//       { $sort: { restockedAt: -1 } },
+//     ];
+
+//     const countPipeline = [
+//       { $match: match },
+//       {
+//         $group: {
+//           _id: {
+//             productId: '$productId',
+//             variantId: '$variantId',
+//             subVariantId: '$subVariantId',
+//           },
+//         },
+//       },
+//       { $count: 'total' },
+//     ];
+
+//     const [results, countResult] = await Promise.all([
+//       RestockLog.aggregate([
+//         ...pipeline,
+//         { $skip: skip },
+//         { $limit: limitNum },
+//       ]),
+//       RestockLog.aggregate(countPipeline),
+//     ]);
+
+//     const total = countResult[0]?.total || 0;
+
+//     res.json({
+//       success: true,
+//       data: results,
+//       pagination: {
+//         total,
+//         page: parseInt(page),
+//         pages: Math.ceil(total / limitNum),
+//         limit: limitNum,
+//       },
+//     });
+//   } catch (error) {
+//     console.error('Get all restock logs error:', error);
+//     res.status(500).json({ success: false, error: error.message });
+//   }
+// };
+
+// ============================================================
+// DELETE A SINGLE RESTOCK LOG (admin / super_admin only)
+// ============================================================
+
+const getAllRestockLogs = async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 20,
+      productId,
+      userId,
+      from,
+      to,
+      search,
+    } = req.query;
+
+    // ---------- Build match stage ----------
+    const match = {};
+    if (productId) match.productId = new mongoose.Types.ObjectId(productId);
+    if (userId) match.restockedBy = new mongoose.Types.ObjectId(userId);
+    if (from || to) {
+      match.restockedAt = {};
+      if (from) match.restockedAt.$gte = new Date(from);
+      if (to) {
+        const end = new Date(to);
+        end.setHours(23, 59, 59, 999);
+        match.restockedAt.$lte = end;
+      }
+    }
+    if (search && search.trim()) {
+      const re = new RegExp(
+        search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+        'i'
+      );
+      match.$or = [
+        { productName: re },
+        { skuCode: re },
+        { barcode: re },
+        { restockedByEmail: re },
+        { restockedByName: re },
+      ];
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const limitNum = parseInt(limit);
+
+    // ---------- Pipeline ----------
+    const pipeline = [
+      { $match: match },
+      { $sort: { restockedAt: -1 } },
+      {
+        $group: {
+          _id: {
+            productId: '$productId',
+            variantId: '$variantId',
+            subVariantId: '$subVariantId',
+          },
+          // ✅ newest log's real Mongo _id → used for accurate delete
+          lastLogId: { $first: '$_id' },
+          productId: { $first: '$productId' },
+          productName: { $first: '$productName' },
+          skuCode: { $first: '$skuCode' },
+          barcode: { $first: '$barcode' },
+          variantId: { $first: '$variantId' },
+          subVariantId: { $first: '$subVariantId' },
+          variantName: { $first: '$variantName' },
+          subVariantName: { $first: '$subVariantName' },
+          addQuantity: { $first: '$addQuantity' },
+          previousStock: { $first: '$previousStock' },
+          newStock: { $first: '$newStock' },
+          restockedAt: { $first: '$restockedAt' },
+          restockedByName: { $first: '$restockedByName' },
+          restockedByEmail: { $first: '$restockedByEmail' },
+          source: { $first: '$source' },
+          totalRestocked: { $sum: '$addQuantity' },
+          totalEvents: { $sum: 1 },
+        },
+      },
+      { $sort: { restockedAt: -1 } },
+      {
+        // ✅ strip compound _id, stringify productId, keep lastLogId
+        $project: {
+          _id: 0,
+          lastLogId: 1,
+          productId: { $toString: '$_id.productId' },
+          variantId: '$_id.variantId',
+          subVariantId: '$_id.subVariantId',
+          productName: 1,
+          skuCode: 1,
+          barcode: 1,
+          variantName: 1,
+          subVariantName: 1,
+          addQuantity: 1,
+          previousStock: 1,
+          newStock: 1,
+          restockedAt: 1,
+          restockedByName: 1,
+          restockedByEmail: 1,
+          source: 1,
+          totalRestocked: 1,
+          totalEvents: 1,
+        },
+      },
+    ];
+
+    const countPipeline = [
+      { $match: match },
+      {
+        $group: {
+          _id: {
+            productId: '$productId',
+            variantId: '$variantId',
+            subVariantId: '$subVariantId',
+          },
+        },
+      },
+      { $count: 'total' },
+    ];
+
+    const [results, countResult] = await Promise.all([
+      RestockLog.aggregate([
+        ...pipeline,
+        { $skip: skip },
+        { $limit: limitNum },
+      ]),
+      RestockLog.aggregate(countPipeline),
+    ]);
+
+    const total = countResult[0]?.total || 0;
+
+    res.json({
+      success: true,
+      data: results,
+      pagination: {
+        total,
+        page: parseInt(page),
+        pages: Math.ceil(total / limitNum),
+        limit: limitNum,
+      },
+    });
+  } catch (error) {
+    console.error('Get all restock logs error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// const deleteRestockLog = async (req, res) => {
+//   try {
+//     if (!['super_admin', 'admin'].includes(req.user.role)) {
+//       return res.status(403).json({
+//         success: false,
+//         error: 'Permission denied. Only admins and super admins can delete restock history.',
+//       });
+//     }
+
+//     const { id } = req.params;
+
+//     if (!mongoose.Types.ObjectId.isValid(id)) {
+//       return res.status(400).json({ success: false, error: 'Invalid log ID' });
+//     }
+
+//     const log = await RestockLog.findById(id);
+//     if (!log) {
+//       return res.status(404).json({ success: false, error: 'Restock log not found' });
+//     }
+
+//     await log.deleteOne();
+
+//     res.json({
+//       success: true,
+//       message: 'Restock log deleted successfully',
+//       deletedId: id,
+//     });
+//   } catch (error) {
+//     console.error('Delete restock log error:', error);
+//     res.status(500).json({ success: false, error: error.message });
+//   }
+// };
+
+const deleteRestockLog = async (req, res) => {
+  try {
+    if (!['super_admin', 'admin'].includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        error:
+          'Permission denied. Only admins and super admins can delete restock history.',
+      });
+    }
+
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, error: 'Invalid log ID' });
+    }
+
+    const log = await RestockLog.findById(id);
+    if (!log) {
+      return res
+        .status(404)
+        .json({ success: false, error: 'Restock log not found' });
+    }
+
+    await log.deleteOne();
+
+    res.json({
+      success: true,
+      message: 'Restock log deleted successfully',
+      deletedId: id,
+    });
+  } catch (error) {
+    console.error('Delete restock log error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// ============================================================
 // EXPORT
 // ============================================================
 module.exports = {
@@ -2857,5 +4212,8 @@ module.exports = {
   getColorsByIds,
    duplicateProduct,
      restockBulk,
-     getProductByBarcode
+     getProductByBarcode,
+      getProductRestockHistory,
+  getAllRestockLogs,
+  deleteRestockLog, 
 };

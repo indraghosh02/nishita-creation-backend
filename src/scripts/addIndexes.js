@@ -10,6 +10,7 @@ require('dotenv').config({ path: path.join(rootPath, '.env') });
 
 // ✅ FIX: Product model path from root
 const Product = require(path.join(rootPath, 'src/models/Product'));
+const RestockLog = require(path.join(rootPath, 'src/models/RestockLog'));
 
 async function addIndexes() {
   try {
@@ -27,6 +28,23 @@ async function addIndexes() {
     console.log('📊 Database:', mongoose.connection.name);
 
     console.log('📊 Creating indexes...');
+
+    console.log('  → Rebuilding restock idempotency index...');
+    const restockIndexes = await RestockLog.collection.indexes();
+    const oldIdempotencyIndex = restockIndexes.find(
+      index => index.name === 'idempotencyKey_1'
+    );
+    if (oldIdempotencyIndex) {
+      await RestockLog.collection.dropIndex('idempotencyKey_1');
+    }
+    await RestockLog.collection.createIndex(
+      { idempotencyKey: 1 },
+      {
+        name: 'idempotencyKey_unique_string',
+        unique: true,
+        partialFilterExpression: { idempotencyKey: { $type: 'string' } },
+      }
+    );
 
     // Add compound indexes for common queries
     console.log('  → Creating category+isActive+createdAt index...');
