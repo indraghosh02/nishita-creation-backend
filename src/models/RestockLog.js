@@ -106,6 +106,9 @@ const restockLogSchema = new mongoose.Schema({
   previousStock: { type: Number, default: 0 },
   newStock: { type: Number, default: 0 },
 
+   baseStockBefore: { type: Number, default: null },
+  baseStockAfter:  { type: Number, default: null },
+
   restockedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',

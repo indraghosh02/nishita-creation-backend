@@ -2198,7 +2198,19 @@ const updateProduct = async (req, res) => {
     if (shortDescription !== undefined) product.shortDescription = shortDescription || '';
     if (fullDescription && fullDescription !== '<p></p>') product.fullDescription = fullDescription;
     if (brandName !== undefined) product.brand = brandName || '';
-    if (stockQuantity !== undefined) product.stockQuantity = stockQuantity;
+    // For variant products, root stock is derived from variant stock.
+    // The submitted root value is only used for products without variants.
+    if (finalHasVariants) {
+      product.stockQuantity = processedVariants.reduce(
+        (total, variantType) => total + (variantType.variants || []).reduce(
+          (variantTotal, variant) => variantTotal + (Number(variant.stockQuantity) || 0),
+          0
+        ),
+        0
+      );
+    } else if (stockQuantity !== undefined) {
+      product.stockQuantity = stockQuantity;
+    }
     if (stockAlertQuantity !== undefined) product.stockAlertQuantity = stockAlertQuantity || 0;
     if (skuCode) product.skuCode = skuCode;
     if (regularPrice !== undefined) product.regularPrice = regularPrice;
@@ -2278,7 +2290,7 @@ const updateProduct = async (req, res) => {
       // ---- Base product ----
       const newBaseStock = Number(product.stockQuantity) || 0;
       const baseDiff = newBaseStock - previousBaseStock;
-      if (baseDiff > 0) {
+      if (!finalHasVariants && baseDiff > 0) {
         logsToInsert.push({
           productId: product._id,
           productName: product.productName,
@@ -3568,6 +3580,234 @@ const duplicateProduct = async (req, res) => {
 
 
 //working
+// const restockBulk = async (req, res) => {
+//   try {
+//     const { items, requestId } = req.body;
+
+//     if (!Array.isArray(items) || items.length === 0) {
+//       return res.status(400).json({ success: false, error: 'No items provided' });
+//     }
+
+//     if (!['super_admin', 'admin', 'moderator'].includes(req.user.role)) {
+//       return res.status(403).json({
+//         success: false,
+//         error: 'Permission denied. Only admins and moderators can restock.',
+//       });
+//     }
+
+//     let updatedCount = 0;
+//     const errors = [];
+//     const results = [];
+
+//     for (const [index, item] of items.entries()) {
+//       const { productId, variantId, subVariantId, addQuantity } = item;
+//       const add = Math.max(0, parseInt(addQuantity, 10) || 0);
+//       if (!productId || add <= 0) continue;
+
+//       // ✅ per-item idempotency key (one per request+index)
+//       const idempotencyKey = requestId ? `${requestId}-${index}` : null;
+
+//       // ✅ pre-check — skip already-processed items entirely
+//       if (idempotencyKey) {
+//         const alreadyProcessed = await RestockLog.findOne({ idempotencyKey });
+//         if (alreadyProcessed) {
+//           console.warn('Skipping already-processed item:', idempotencyKey);
+//           continue;
+//         }
+//       }
+
+//       try {
+//         const product = await Product.findById(productId);
+//         if (!product) {
+//           errors.push({ productId, error: 'Product not found' });
+//           continue;
+//         }
+
+//         // ---------- Resolve names for log (before mutation) ----------
+//         let logVariantName = '';
+//         let logSubVariantName = '';
+//         let logSkuCode = product.skuCode || '';
+//         let logBarcode = product.barcode || '';
+
+//         if (variantId) {
+//           for (const vt of product.variantTypes || []) {
+//             for (const v of vt.variants || []) {
+//               const vId = v.id || (v._id ? v._id.toString() : null);
+//               if (vId === variantId) {
+//                 logVariantName = v.name || '';
+
+//                 // Prefer variant-level sku/barcode when present
+//                 if (v.skuCode) logSkuCode = v.skuCode;
+//                 if (v.barcode) logBarcode = v.barcode;
+
+//                 if (subVariantId) {
+//                   for (const sv of v.subVariants || []) {
+//                     const svId = sv.id || (sv._id ? sv._id.toString() : null);
+//                     if (svId === subVariantId) {
+//                       logSubVariantName = sv.name || '';
+//                       if (sv.skuCode) logSkuCode = sv.skuCode;
+//                       if (sv.barcode) logBarcode = sv.barcode;
+//                       break;
+//                     }
+//                   }
+//                 }
+//                 break;
+//               }
+//             }
+//             if (logVariantName) break;
+//           }
+//         }
+
+//         // ---------- Capture previous stock for the log ----------
+//         let previousStock = 0;
+//         let newStock = 0;
+
+//         // ----------- BASE PRODUCT -----------
+//         if (!variantId && !subVariantId) {
+//           previousStock = Number(product.stockQuantity) || 0;
+//           product.stockQuantity = previousStock + add;
+//           newStock = product.stockQuantity;
+//         }
+//         // ----------- VARIANT -----------
+//         else if (variantId && !subVariantId) {
+//           let found = false;
+//           for (const vt of product.variantTypes || []) {
+//             for (const v of vt.variants || []) {
+//               const vId = v.id || (v._id ? v._id.toString() : null);
+//               if (vId === variantId) {
+//                 previousStock = Number(v.stockQuantity) || 0;
+//                 v.stockQuantity = previousStock + add;
+//                 newStock = v.stockQuantity;
+//                 found = true;
+//                 break;
+//               }
+//             }
+//             if (found) break;
+//           }
+//           if (!found) {
+//             errors.push({ productId, variantId, error: 'Variant not found' });
+//             continue;
+//           }
+//           // ✅ Parent product stock also increases
+//           product.stockQuantity = (Number(product.stockQuantity) || 0) + add;
+//         }
+//         // ----------- SUB-VARIANT -----------
+//         else {
+//           let found = false;
+//           let parentVariant = null;
+//           for (const vt of product.variantTypes || []) {
+//             for (const v of vt.variants || []) {
+//               const vId = v.id || (v._id ? v._id.toString() : null);
+//               if (vId === variantId) {
+//                 for (const sv of v.subVariants || []) {
+//                   const svId = sv.id || (sv._id ? sv._id.toString() : null);
+//                   if (svId === subVariantId) {
+//                     previousStock = Number(sv.stockQuantity) || 0;
+//                     sv.stockQuantity = previousStock + add;
+//                     newStock = sv.stockQuantity;
+//                     parentVariant = v;
+//                     found = true;
+//                     break;
+//                   }
+//                 }
+//               }
+//               if (found) break;
+//             }
+//             if (found) break;
+//           }
+//           if (!found) {
+//             errors.push({ productId, subVariantId, error: 'Sub-variant not found' });
+//             continue;
+//           }
+//           // ✅ Parent variant stock also increases
+//           if (parentVariant) {
+//             parentVariant.stockQuantity =
+//               (Number(parentVariant.stockQuantity) || 0) + add;
+//           }
+//           // ✅ Parent product stock also increases
+//           product.stockQuantity = (Number(product.stockQuantity) || 0) + add;
+//         }
+
+//         if (product.hasVariants) {
+//           product.stockQuantity = (product.variantTypes || []).reduce(
+//             (total, variantType) => total + (variantType.variants || []).reduce(
+//               (variantTotal, variant) => variantTotal + (Number(variant.stockQuantity) || 0),
+//               0
+//             ),
+//             0
+//           );
+//         }
+
+//         product.updatedBy = req.user.id;
+//         product.lastUpdatedAt = new Date();
+//         await product.save();
+
+//         updatedCount++;
+//         results.push({ productId, variantId, subVariantId, newStock });
+
+//         // ============================================
+//         // LOG THE RESTOCK
+//         // ============================================
+//         try {
+//           await RestockLog.create({
+//             productId: product._id,
+//             productName: product.productName,
+//             skuCode: logSkuCode,
+//             barcode: logBarcode,
+//             variantId: variantId || null,
+//             subVariantId: subVariantId || null,
+//             variantName: logVariantName,
+//             subVariantName: logSubVariantName,
+//             addQuantity: add,
+//             previousStock,
+//             newStock,
+//             restockedBy: req.user.id,
+//             restockedByName: req.user.name || '',
+//             restockedByEmail: req.user.email || '',
+//             restockedByRole: req.user.role || '',
+//             restockedAt: new Date(),
+//             source: variantId || subVariantId ? 'bulk' : 'scan',
+//             idempotencyKey, // ✅
+//           });
+//         } catch (logErr) {
+//           if (logErr.code === 11000) {
+//             // ✅ duplicate submission — the actual stock increment already happened
+//             //    for this exact request, so just swallow the error.
+//             console.warn('Duplicate restock request ignored:', idempotencyKey);
+//           } else {
+//             console.error('Restock log error:', logErr);
+//           }
+//         }
+
+//         // Sync embedded category product (base stock)
+//         try {
+//           await Category.findOneAndUpdate(
+//             { _id: product.category, 'products.productId': product._id },
+//             { $set: { 'products.$.stockQuantity': product.stockQuantity } }
+//           );
+//         } catch (syncErr) {
+//           console.error('Category sync error:', syncErr);
+//         }
+//       } catch (itemErr) {
+//         console.error('Restock item error:', itemErr);
+//         errors.push({ productId, error: itemErr.message });
+//       }
+//     }
+
+//     res.json({
+//       success: true,
+//       data: { updatedCount, errors, results },
+//       message: `Restocked ${updatedCount} item(s)`,
+//     });
+//   } catch (error) {
+//     console.error('Bulk restock error:', error);
+//     res.status(500).json({
+//       success: false,
+//       error: error.message || 'Server error while restocking',
+//     });
+//   }
+// };
+
 const restockBulk = async (req, res) => {
   try {
     const { items, requestId } = req.body;
@@ -3610,6 +3850,9 @@ const restockBulk = async (req, res) => {
           errors.push({ productId, error: 'Product not found' });
           continue;
         }
+
+        // ✅ Capture base stock BEFORE any mutation (for the log)
+        const baseStockBefore = Number(product.stockQuantity) || 0;
 
         // ---------- Resolve names for log (before mutation) ----------
         let logVariantName = '';
@@ -3716,6 +3959,19 @@ const restockBulk = async (req, res) => {
           product.stockQuantity = (Number(product.stockQuantity) || 0) + add;
         }
 
+        if (product.hasVariants) {
+          product.stockQuantity = (product.variantTypes || []).reduce(
+            (total, variantType) =>
+              total +
+              (variantType.variants || []).reduce(
+                (variantTotal, variant) =>
+                  variantTotal + (Number(variant.stockQuantity) || 0),
+                0
+              ),
+            0
+          );
+        }
+
         product.updatedBy = req.user.id;
         product.lastUpdatedAt = new Date();
         await product.save();
@@ -3739,6 +3995,9 @@ const restockBulk = async (req, res) => {
             addQuantity: add,
             previousStock,
             newStock,
+            // ✅ Base product snapshot (already recomputed above)
+            baseStockBefore,
+            baseStockAfter: Number(product.stockQuantity) || 0,
             restockedBy: req.user.id,
             restockedByName: req.user.name || '',
             restockedByEmail: req.user.email || '',
@@ -3749,8 +4008,6 @@ const restockBulk = async (req, res) => {
           });
         } catch (logErr) {
           if (logErr.code === 11000) {
-            // ✅ duplicate submission — the actual stock increment already happened
-            //    for this exact request, so just swallow the error.
             console.warn('Duplicate restock request ignored:', idempotencyKey);
           } else {
             console.error('Restock log error:', logErr);
@@ -3790,7 +4047,8 @@ const getProductByBarcode = async (req, res) => {
   try {
     const { barcodeNumber } = req.params;
     const product = await Product.findOne({ barcode: barcodeNumber })
-      .select('productName slug images regularPrice discountPrice stockQuantity rating isActive');
+      // .select('productName slug images regularPrice discountPrice stockQuantity rating isActive');
+        .select('productName slug skuCode barcode images regularPrice discountPrice stockQuantity rating isActive hasVariants variantTypes');
     if (!product) {
       return res.status(404).json({ success: false, error: 'No product found for this barcode' });
     }
@@ -3858,6 +4116,10 @@ const getProductRestockHistory = async (req, res) => {
 
 
 
+// ============================================================
+// DELETE A SINGLE RESTOCK LOG (admin / super_admin only)
+// ============================================================
+
 // const getAllRestockLogs = async (req, res) => {
 //   try {
 //     const {
@@ -3900,7 +4162,7 @@ const getProductRestockHistory = async (req, res) => {
 //     const skip = (parseInt(page) - 1) * parseInt(limit);
 //     const limitNum = parseInt(limit);
 
-//     // ---------- Group by product (and variant) ----------
+//     // ---------- Pipeline ----------
 //     const pipeline = [
 //       { $match: match },
 //       { $sort: { restockedAt: -1 } },
@@ -3911,6 +4173,8 @@ const getProductRestockHistory = async (req, res) => {
 //             variantId: '$variantId',
 //             subVariantId: '$subVariantId',
 //           },
+//           // ✅ newest log's real Mongo _id → used for accurate delete
+//           lastLogId: { $first: '$_id' },
 //           productId: { $first: '$productId' },
 //           productName: { $first: '$productName' },
 //           skuCode: { $first: '$skuCode' },
@@ -3919,7 +4183,6 @@ const getProductRestockHistory = async (req, res) => {
 //           subVariantId: { $first: '$subVariantId' },
 //           variantName: { $first: '$variantName' },
 //           subVariantName: { $first: '$subVariantName' },
-//           // last restock (because we sorted desc, $first is the newest)
 //           addQuantity: { $first: '$addQuantity' },
 //           previousStock: { $first: '$previousStock' },
 //           newStock: { $first: '$newStock' },
@@ -3927,12 +4190,35 @@ const getProductRestockHistory = async (req, res) => {
 //           restockedByName: { $first: '$restockedByName' },
 //           restockedByEmail: { $first: '$restockedByEmail' },
 //           source: { $first: '$source' },
-//           // aggregates across all events for this product
 //           totalRestocked: { $sum: '$addQuantity' },
 //           totalEvents: { $sum: 1 },
 //         },
 //       },
 //       { $sort: { restockedAt: -1 } },
+//       {
+//         // ✅ strip compound _id, stringify productId, keep lastLogId
+//         $project: {
+//           _id: 0,
+//           lastLogId: 1,
+//           productId: { $toString: '$_id.productId' },
+//           variantId: '$_id.variantId',
+//           subVariantId: '$_id.subVariantId',
+//           productName: 1,
+//           skuCode: 1,
+//           barcode: 1,
+//           variantName: 1,
+//           subVariantName: 1,
+//           addQuantity: 1,
+//           previousStock: 1,
+//           newStock: 1,
+//           restockedAt: 1,
+//           restockedByName: 1,
+//           restockedByEmail: 1,
+//           source: 1,
+//           totalRestocked: 1,
+//           totalEvents: 1,
+//         },
+//       },
 //     ];
 
 //     const countPipeline = [
@@ -3976,10 +4262,6 @@ const getProductRestockHistory = async (req, res) => {
 //   }
 // };
 
-// ============================================================
-// DELETE A SINGLE RESTOCK LOG (admin / super_admin only)
-// ============================================================
-
 const getAllRestockLogs = async (req, res) => {
   try {
     const {
@@ -4022,7 +4304,7 @@ const getAllRestockLogs = async (req, res) => {
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const limitNum = parseInt(limit);
 
-    // ---------- Pipeline ----------
+    // ---------- Grouped rows: one per (product, variant, subVariant) ----------
     const pipeline = [
       { $match: match },
       { $sort: { restockedAt: -1 } },
@@ -4033,7 +4315,6 @@ const getAllRestockLogs = async (req, res) => {
             variantId: '$variantId',
             subVariantId: '$subVariantId',
           },
-          // ✅ newest log's real Mongo _id → used for accurate delete
           lastLogId: { $first: '$_id' },
           productId: { $first: '$productId' },
           productName: { $first: '$productName' },
@@ -4046,6 +4327,8 @@ const getAllRestockLogs = async (req, res) => {
           addQuantity: { $first: '$addQuantity' },
           previousStock: { $first: '$previousStock' },
           newStock: { $first: '$newStock' },
+          baseStockBefore: { $first: '$baseStockBefore' },
+          baseStockAfter: { $first: '$baseStockAfter' },
           restockedAt: { $first: '$restockedAt' },
           restockedByName: { $first: '$restockedByName' },
           restockedByEmail: { $first: '$restockedByEmail' },
@@ -4056,7 +4339,6 @@ const getAllRestockLogs = async (req, res) => {
       },
       { $sort: { restockedAt: -1 } },
       {
-        // ✅ strip compound _id, stringify productId, keep lastLogId
         $project: {
           _id: 0,
           lastLogId: 1,
@@ -4071,6 +4353,8 @@ const getAllRestockLogs = async (req, res) => {
           addQuantity: 1,
           previousStock: 1,
           newStock: 1,
+          baseStockBefore: 1,
+          baseStockAfter: 1,
           restockedAt: 1,
           restockedByName: 1,
           restockedByEmail: 1,
@@ -4081,6 +4365,7 @@ const getAllRestockLogs = async (req, res) => {
       },
     ];
 
+    // ---------- Count pipeline ----------
     const countPipeline = [
       { $match: match },
       {
@@ -4192,6 +4477,208 @@ const deleteRestockLog = async (req, res) => {
 };
 
 // ============================================================
+// GET STOCK ALERT PRODUCTS (base-product-only logic)
+// A product appears if:
+//   - stockQuantity <= 0                              → Out of Stock
+//   - 0 < stockQuantity <= stockAlertQuantity (> 0)   → Low Stock
+// Variants are ignored for the alert decision, but their current stock
+// is included in the response so the admin sees the full picture.
+// ============================================================
+const getStockAlertProducts = async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 20,
+      search,
+      category,
+      brand,
+      alertType = 'all',   // 'all' | 'out' | 'low'
+      sort = 'lowest',     // 'lowest' | 'highest' | 'name_asc' | 'newest'
+    } = req.query;
+
+    // ---------- Build base query ----------
+    const query = {
+      isActive: true,
+      stockAlertQuantity: { $gt: 0 }, // only products with alert threshold set
+    };
+
+    if (category) query.category = new mongoose.Types.ObjectId(category);
+    if (brand) query.brand = { $regex: brand, $options: 'i' };
+
+    if (search && search.trim()) {
+      const re = new RegExp(
+        search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+        'i'
+      );
+      query.$or = [
+        { productName: re },
+        { skuCode: re },
+        { barcode: re },
+        { brand: re },
+      ];
+    }
+
+    // ---------- Apply alert-type filter on base stock ----------
+    if (alertType === 'out') {
+      query.stockQuantity = { $lte: 0 };
+    } else if (alertType === 'low') {
+      query.stockQuantity = {
+        $gt: 0,
+        $lte: query.stockAlertQuantity.$gt, // will be replaced below
+      };
+      // Proper $expr for "0 < stock <= alertAlert"
+      delete query.stockQuantity;
+      query.$expr = {
+        $and: [
+          { $gt: ['$stockQuantity', 0] },
+          { $lte: ['$stockQuantity', '$stockAlertQuantity'] },
+        ],
+      };
+    } else {
+      // 'all' → out OR low
+      query.$expr = {
+        $or: [
+          { $lte: ['$stockQuantity', 0] },
+          {
+            $and: [
+              { $gt: ['$stockQuantity', 0] },
+              { $lte: ['$stockQuantity', '$stockAlertQuantity'] },
+            ],
+          },
+        ],
+      };
+    }
+
+    // ---------- Sort ----------
+    let sortOption = { stockQuantity: 1, productName: 1 };
+    if (sort === 'highest') sortOption = { stockQuantity: -1, productName: 1 };
+    else if (sort === 'name_asc') sortOption = { productName: 1 };
+    else if (sort === 'newest') sortOption = { updatedAt: -1 };
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const limitNum = parseInt(limit);
+
+    // ---------- Fetch paginated + total ----------
+    const [products, total] = await Promise.all([
+      Product.find(query)
+        .select(
+          'productName slug skuCode barcode brand images regularPrice ' +
+          'discountPrice stockQuantity stockAlertQuantity unit hasVariants ' +
+          'variantTypes isActive updatedAt'
+        )
+        .sort(sortOption)
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
+      Product.countDocuments(query),
+    ]);
+
+    // ---------- Compute alertLevel + variant breakdown for display ----------
+    const data = products.map((p) => {
+      const baseStock = Number(p.stockQuantity) || 0;
+      const alertQty = Number(p.stockAlertQuantity) || 0;
+
+      let alertLevel = 'low';
+      if (baseStock <= 0) alertLevel = 'out';
+      else if (alertQty > 0 && baseStock <= alertQty) alertLevel = 'low';
+
+      // For display only: flatten variant + sub-variant stocks
+      const alertVariants = [];
+      if (p.hasVariants && Array.isArray(p.variantTypes)) {
+        p.variantTypes.forEach((vt) => {
+          (vt.variants || []).forEach((v) => {
+            const vStock = Number(v.stockQuantity) || 0;
+            const subs = v.subVariants || [];
+
+            if (subs.length > 0) {
+              subs.forEach((sv) => {
+                const svStock = Number(sv.stockQuantity) || 0;
+                alertVariants.push({
+                  id: sv.id,
+                  name: `${v.name || ''} / ${sv.name || ''}`.trim(),
+                  stockQuantity: svStock,
+                  skuCode: sv.skuCode || '',
+                  barcode: sv.barcode || '',
+                  isOut: svStock <= 0,
+                });
+              });
+            } else {
+              alertVariants.push({
+                id: v.id,
+                name: v.name || '',
+                stockQuantity: vStock,
+                skuCode: v.skuCode || '',
+                barcode: v.barcode || '',
+                isOut: vStock <= 0,
+              });
+            }
+          });
+        });
+      }
+
+      return {
+        _id: p._id,
+        productName: p.productName,
+        slug: p.slug,
+        skuCode: p.skuCode,
+        barcode: p.barcode,
+        brand: p.brand,
+        images: p.images,
+        regularPrice: p.regularPrice,
+        discountPrice: p.discountPrice,
+        unit: p.unit,
+        hasVariants: p.hasVariants,
+        isActive: p.isActive,
+        updatedAt: p.updatedAt,
+        stockQuantity: baseStock,
+        stockAlertQuantity: alertQty,
+        alertLevel,
+        alertVariants,
+      };
+    });
+
+    // ---------- Summary counts (same filter, no pagination) ----------
+    const summaryAgg = await Product.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: {
+            $cond: [
+              { $lte: ['$stockQuantity', 0] },
+              'out',
+              'low',
+            ],
+          },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const summary = { outOfStock: 0, lowStock: 0, total: 0 };
+    summaryAgg.forEach((s) => {
+      if (s._id === 'out') summary.outOfStock = s.count;
+      if (s._id === 'low') summary.lowStock = s.count;
+    });
+    summary.total = summary.outOfStock + summary.lowStock;
+
+    res.json({
+      success: true,
+      data,
+      summary,
+      pagination: {
+        total,
+        page: parseInt(page),
+        pages: Math.ceil(total / limitNum),
+        limit: limitNum,
+      },
+    });
+  } catch (error) {
+    console.error('Get stock alert products error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// ============================================================
 // EXPORT
 // ============================================================
 module.exports = {
@@ -4216,4 +4703,5 @@ module.exports = {
       getProductRestockHistory,
   getAllRestockLogs,
   deleteRestockLog, 
+  getStockAlertProducts
 };

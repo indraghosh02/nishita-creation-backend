@@ -23,7 +23,8 @@ const {
     getProductByBarcode,
     getProductRestockHistory,   // ✅ ADD
   getAllRestockLogs, 
-  deleteRestockLog
+  deleteRestockLog,
+  getStockAlertProducts
 } = require('../controllers/productController');
 
 // ============================================================
@@ -375,5 +376,6 @@ router.get('/admin/all', isModeratorOrAdmin, getAdminProducts);
 router.post('/:id/duplicate', isModeratorOrAdmin, duplicateProduct);
 router.post('/restock-bulk', isModeratorOrAdmin, restockBulk);
 router.delete('/admin/restock-logs/:id', isModeratorOrAdmin, deleteRestockLog);
+router.get('/admin/stock-alerts', isModeratorOrAdmin, getStockAlertProducts);
 
 module.exports = router;

@@ -188,6 +188,313 @@ const getAccurateDeviceInfo = (req, clientDeviceInfo = {}) => {
   return deviceInfo;
 };
 
+
+// ============================================================
+// Helper: Adjust product stock for a single order item
+// Walks variantTypes → variants → subVariants and updates
+// the correct node. Then recomputes base stockQuantity for
+// variant products so it always equals the sum of its variants.
+//
+// direction:  -1 = decrement (order placed / added)
+//             +1 = increment (cancel / reject / return / remove)
+// ============================================================
+const adjustProductStockForItem = async (item, direction = -1) => {
+  if (!item || !item.productId) return null;
+
+  const product = await Product.findById(item.productId);
+  if (!product) return null;
+
+  const variantDetails = item.variantDetails || [];
+  const hasVariantDetails = variantDetails.length > 0;
+
+  // ---------- Case 1: item has nested variantDetails ----------
+  if (hasVariantDetails) {
+    product.hasVariants = true;
+
+    variantDetails.forEach((vd) => {
+      const variantId = vd.variantId;
+      const subVariants = vd.subVariants || [];
+
+      // Locate the variant inside product.variantTypes
+      let matchedVariant = null;
+      if (product.variantTypes) {
+        for (const vt of product.variantTypes) {
+          const found = (vt.variants || []).find(
+            (v) => v.id === variantId || v._id?.toString() === variantId
+          );
+          if (found) {
+            matchedVariant = found;
+            break;
+          }
+        }
+      }
+      if (!matchedVariant) return;
+
+      if (subVariants.length > 0) {
+        // Sub-variant path: adjust each sub-variant
+        subVariants.forEach((sv) => {
+          const subVariantId = sv.subVariantId;
+          const qty = Number(sv.quantity) || 0;
+          if (qty <= 0) return;
+
+          const matchedSub = (matchedVariant.subVariants || []).find(
+            (s) => s.id === subVariantId || s._id?.toString() === subVariantId
+          );
+          if (!matchedSub) return;
+
+          matchedSub.stockQuantity = Math.max(
+            0,
+            (Number(matchedSub.stockQuantity) || 0) + direction * qty
+          );
+        });
+
+        // Parent variant stock = sum of its sub-variants
+        matchedVariant.stockQuantity = (matchedVariant.subVariants || []).reduce(
+          (sum, s) => sum + (Number(s.stockQuantity) || 0),
+          0
+        );
+      } else {
+        // Variant-only path
+        const qty = Number(vd.quantity) || 0;
+        if (qty <= 0) return;
+
+        matchedVariant.stockQuantity = Math.max(
+          0,
+          (Number(matchedVariant.stockQuantity) || 0) + direction * qty
+        );
+      }
+    });
+
+    // Recompute base stock from all variants
+    product.stockQuantity = (product.variantTypes || []).reduce(
+      (total, vt) =>
+        total +
+        (vt.variants || []).reduce(
+          (vTotal, v) => vTotal + (Number(v.stockQuantity) || 0),
+          0
+        ),
+      0
+    );
+  }
+  // ---------- Case 2: plain product (no variants) ----------
+  else {
+    const qty = Number(item.quantity) || 0;
+    if (qty > 0) {
+      product.stockQuantity = Math.max(
+        0,
+        (Number(product.stockQuantity) || 0) + direction * qty
+      );
+    }
+  }
+
+  // Update purchase count only on decrement (order placed / add)
+  if (direction < 0) {
+    const qty = Number(item.quantity) || 0;
+    if (qty > 0) {
+      product.purchaseCount = (Number(product.purchaseCount) || 0) + qty;
+    }
+  }
+
+  // Sync embedded copy in category (base stock only — matches your category schema)
+  try {
+    const Category = require('../models/Category');
+    await Category.findOneAndUpdate(
+      { _id: product.category, 'products.productId': product._id },
+      { $set: { 'products.$.stockQuantity': product.stockQuantity } }
+    );
+  } catch (syncErr) {
+    console.error('Category stock sync error:', syncErr.message);
+  }
+
+  await product.save();
+  return product;
+};
+
+
+// ============================================================
+// Flatten an order item into per-line entries with a stable key
+// so we can diff old vs new quantities reliably.
+//
+// Key format:
+//   base         → productId|base
+//   color        → productId|color:<hex>
+//   variant      → productId|v:<variantId>
+//   sub-variant  → productId|v:<variantId>|s:<subVariantId>
+// ============================================================
+const flattenOrderItemsForStockDiff = (items = []) => {
+  const map = new Map();
+
+  const bump = (key, qty, ctx) => {
+    if (!key) return;
+    if (!map.has(key)) {
+      map.set(key, { quantity: 0, ...ctx });
+    }
+    map.get(key).quantity += Number(qty) || 0;
+  };
+
+  items.forEach((item) => {
+    const productId = item.productId?.toString();
+    if (!productId) return;
+
+    const baseCtx = {
+      productId: item.productId,
+      productName: item.productName,
+      variantId: null,
+      subVariantId: null,
+      variantName: '',
+      subVariantName: '',
+      selectedColor: null,
+      image: item.image || '',
+    };
+
+    // ---- Nested variantDetails (variant + sub-variant) ----
+    if (Array.isArray(item.variantDetails) && item.variantDetails.length > 0) {
+      item.variantDetails.forEach((vd) => {
+        const vId = vd.variantId || null;
+
+        if (Array.isArray(vd.subVariants) && vd.subVariants.length > 0) {
+          vd.subVariants.forEach((sv) => {
+            const key = `${productId}|v:${vId}|s:${sv.subVariantId}`;
+            bump(key, sv.quantity, {
+              ...baseCtx,
+              variantId: vId,
+              subVariantId: sv.subVariantId,
+              variantName: vd.variantName || '',
+              subVariantName: sv.subVariantName || '',
+              selectedColor: sv.selectedColor || vd.selectedColor || null,
+              image: sv.image || vd.image || item.image || '',
+            });
+          });
+        } else {
+          const key = `${productId}|v:${vId}`;
+          bump(key, vd.quantity, {
+            ...baseCtx,
+            variantId: vId,
+            variantName: vd.variantName || '',
+            selectedColor: vd.selectedColor || null,
+            image: vd.image || item.image || '',
+          });
+        }
+      });
+      return; // don't also count as plain base
+    }
+
+    // ---- Flat variant item (variantId directly on item) ----
+    if (item.variantId) {
+      const vId = item.variantId;
+      if (item.subVariantId) {
+        const key = `${productId}|v:${vId}|s:${item.subVariantId}`;
+        bump(key, item.quantity, {
+          ...baseCtx,
+          variantId: vId,
+          subVariantId: item.subVariantId,
+          variantName: item.variantName || '',
+          subVariantName: item.subVariantName || '',
+          selectedColor: item.selectedColor || null,
+          image: item.variantImage || item.image || '',
+        });
+      } else {
+        const key = `${productId}|v:${vId}`;
+        bump(key, item.quantity, {
+          ...baseCtx,
+          variantId: vId,
+          variantName: item.variantName || '',
+          selectedColor: item.selectedColor || null,
+          image: item.variantImage || item.image || '',
+        });
+      }
+      return;
+    }
+
+    // ---- Color product (multiple colors on one item) ----
+    if (Array.isArray(item.colors) && item.colors.length > 0) {
+      item.colors.forEach((c) => {
+        const key = `${productId}|color:${c.color || 'none'}`;
+        bump(key, c.quantity, {
+          ...baseCtx,
+          selectedColor: c.color || null,
+        });
+      });
+      return;
+    }
+
+    // ---- Plain product ----
+    const key = `${productId}|base`;
+    bump(key, item.quantity, baseCtx);
+  });
+
+  return map;
+};
+
+// ============================================================
+// Apply stock deltas for order edit.
+//   delta = newQty - oldQty
+//   delta > 0 → customer is buying MORE → inventory shrinks → direction -1
+//   delta < 0 → customer is buying LESS → inventory grows  → direction +1
+//
+// Reuses adjustProductStockForItem so base product stock for
+// variant products is always recomputed as sum(variant stock).
+// ============================================================
+const applyStockDiffForOrderEdit = async (oldItems, newItems) => {
+  const oldMap = flattenOrderItemsForStockDiff(oldItems || []);
+  const newMap = flattenOrderItemsForStockDiff(newItems || []);
+
+  const allKeys = new Set([...oldMap.keys(), ...newMap.keys()]);
+  const errors = [];
+  let applied = 0;
+
+  for (const key of allKeys) {
+    const oldQty = oldMap.get(key)?.quantity || 0;
+    const newQty = newMap.get(key)?.quantity || 0;
+    const delta = newQty - oldQty;
+
+    if (delta === 0) continue;
+
+    const ctx = newMap.get(key) || oldMap.get(key);
+
+    // Build an item shaped the way adjustProductStockForItem expects
+    const item = {
+      productId: ctx.productId,
+      quantity: Math.abs(delta),
+      variantDetails: ctx.variantId
+        ? [
+            {
+              variantId: ctx.variantId,
+              variantName: ctx.variantName,
+              quantity: ctx.subVariantId ? 0 : Math.abs(delta),
+              subVariants: ctx.subVariantId
+                ? [
+                    {
+                      subVariantId: ctx.subVariantId,
+                      subVariantName: ctx.subVariantName,
+                      quantity: Math.abs(delta),
+                    },
+                  ]
+                : [],
+            },
+          ]
+        : [],
+    };
+
+    const direction = delta > 0 ? -1 : +1;
+
+    try {
+      await adjustProductStockForItem(item, direction);
+      applied++;
+    } catch (err) {
+      console.error(
+        `Stock adjust failed for key ${key} (delta ${delta}):`,
+        err.message
+      );
+      errors.push({ key, delta, error: err.message });
+    }
+  }
+
+  return { applied, errors };
+};
+
+
+
 const getClientDeviceInfoFromBody = (req) => {
   const { clientDeviceInfo } = req.body || {};
   
@@ -407,12 +714,39 @@ const createOrder = async (req, res) => {
       const productId = item.productId.toString();
       const productDoc = productsById[productId];
       
-      if (!productGroups[productId]) {
+      // if (!productGroups[productId]) {
+      //   productGroups[productId] = {
+      //     productId: item.productId,
+      //     productName: item.productName,
+      //     productSlug: item.productSlug || '',
+      //     // ✅ ALWAYS use the product's OWN base image from database
+      //     image: productDoc?.images?.[0]?.url || item.image || '',
+      //     regularPrice: item.regularPrice || 0,
+      //     discountPrice: item.discountPrice || 0,
+      //     unit: item.unit || 'pcs',
+      //     stockQuantity: item.stockQuantity || 0,
+      //     colors: [],
+      //     variants: [],
+      //     quantity: 0,
+      //     hasVariants: false
+      //   };
+      // }
+
+            if (!productGroups[productId]) {
+        // ✅ Slug fallback — never send empty string (schema requires it)
+        let slug = item.productSlug;
+        if (!slug && item.productName) {
+          slug = item.productName
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '');
+        }
+        if (!slug) slug = `pos-${item.productId}`;
+
         productGroups[productId] = {
           productId: item.productId,
           productName: item.productName,
-          productSlug: item.productSlug || '',
-          // ✅ ALWAYS use the product's OWN base image from database
+          productSlug: slug,                       // ⬅️ uses the safe slug
           image: productDoc?.images?.[0]?.url || item.image || '',
           regularPrice: item.regularPrice || 0,
           discountPrice: item.discountPrice || 0,
@@ -725,8 +1059,19 @@ const createOrder = async (req, res) => {
       discount: discount || 0,
       total,
       paymentMethod,
-      paymentStatus: paymentMethod === 'cod' ? 'pending' : 'pending',
-      orderStatus: orderStatus === 'pending' ? 'placed' : orderStatus,
+      // paymentStatus: paymentMethod === 'cod' ? 'pending' : 'pending',
+      // orderStatus: orderStatus === 'pending' ? 'placed' : orderStatus,
+
+      paymentStatus:
+        orderPlatform === 'showroom'
+          ? 'paid'
+          : (paymentMethod === 'cod' ? 'pending' : 'pending'),
+      paidAmount: orderPlatform === 'showroom' ? (Number(total) || 0) : 0,
+      orderStatus:
+        orderPlatform === 'showroom'
+          ? 'delivered'
+          : (orderStatus === 'pending' ? 'placed' : orderStatus),
+      orderPlatform: orderPlatform || 'website',
       orderPlatform: orderPlatform || 'website', 
       couponCode: couponCode || null,
       couponDiscount: couponDiscount || 0,
@@ -754,12 +1099,21 @@ const createOrder = async (req, res) => {
     })));
 
     // Update stock
-    for (const item of processedItemsWithCost) {
-      await Product.findByIdAndUpdate(
-        item.productId,
-        { $inc: { stockQuantity: -item.quantity, purchaseCount: item.quantity } }
-      );
-    }
+    // for (const item of processedItemsWithCost) {
+    //   await Product.findByIdAndUpdate(
+    //     item.productId,
+    //     { $inc: { stockQuantity: -item.quantity, purchaseCount: item.quantity } }
+    //   );
+    // }
+
+    // Update stock — walks variants & sub-variants
+for (const item of processedItemsWithCost) {
+  try {
+    await adjustProductStockForItem(item, -1);
+  } catch (stockErr) {
+    console.error(`Stock decrement failed for ${item.productName}:`, stockErr.message);
+  }
+}
 
     // Clear cart
     if (userId) {
@@ -2033,12 +2387,19 @@ const updateOrderStatus = async (req, res) => {
         order.cancellationReason = cancellationReason;
       }
 
+      // for (const item of order.items) {
+      //   await Product.findByIdAndUpdate(
+      //     item.productId,
+      //     { $inc: { stockQuantity: item.quantity } }
+      //   );
+      // }
       for (const item of order.items) {
-        await Product.findByIdAndUpdate(
-          item.productId,
-          { $inc: { stockQuantity: item.quantity } }
-        );
-      }
+  try {
+    await adjustProductStockForItem(item, +1);
+  } catch (e) {
+    console.error('Stock restore (cancel) error:', e.message);
+  }
+}
     }
 
     // ============================================================
@@ -2050,12 +2411,20 @@ const updateOrderStatus = async (req, res) => {
         order.rejectionReason = rejectionReason;
       }
 
+      // for (const item of order.items) {
+      //   await Product.findByIdAndUpdate(
+      //     item.productId,
+      //     { $inc: { stockQuantity: item.quantity } }
+      //   );
+      // }
+
       for (const item of order.items) {
-        await Product.findByIdAndUpdate(
-          item.productId,
-          { $inc: { stockQuantity: item.quantity } }
-        );
-      }
+  try {
+    await adjustProductStockForItem(item, +1);
+  } catch (e) {
+    console.error('Stock restore (cancelOrder) error:', e.message);
+  }
+}
     }
 
     // ============================================================
@@ -3918,10 +4287,19 @@ const addProductToOrder = async (req, res) => {
     if (existingItem) {
       existingItem.quantity += quantity;
       
-      await Product.findByIdAndUpdate(
-        productId,
-        { $inc: { stockQuantity: -quantity } }
-      );
+      // await Product.findByIdAndUpdate(
+      //   productId,
+      //   { $inc: { stockQuantity: -quantity } }
+      // );
+
+      await adjustProductStockForItem(
+  {
+    productId,
+    quantity,
+    variantDetails: [], // plain add — no variant info in this endpoint
+  },
+  -1
+);
     } else {
       const newItem = {
         productId: product._id,
@@ -4014,10 +4392,19 @@ const removeProductFromOrder = async (req, res) => {
     const productName = removedItem.productName;
     const quantity = removedItem.quantity;
 
-    await Product.findByIdAndUpdate(
-      removedItem.productId,
-      { $inc: { stockQuantity: quantity } }
-    );
+    // await Product.findByIdAndUpdate(
+    //   removedItem.productId,
+    //   { $inc: { stockQuantity: quantity } }
+    // );
+
+    await adjustProductStockForItem(
+  {
+    productId: removedItem.productId,
+    quantity: removedItem.quantity,
+    variantDetails: removedItem.variantDetails || [],
+  },
+  +1
+);
 
     order.items.splice(itemIndex, 1);
 
@@ -4118,15 +4505,291 @@ const updateOrderDiscount = async (req, res) => {
 };
 
 // ========== BULK UPDATE ORDER - CLEAN VERSION (FIXED IMAGES) ==========
+// const bulkUpdateOrder = async (req, res) => {
+//   try {
+//     const { id } = req.params;
+//     const { 
+//       customerInfo, 
+//       items, 
+//       discount, 
+//       discountNote, 
+//       deliveryNote 
+//     } = req.body;
+
+//     const order = await Order.findById(id);
+//     if (!order) {
+//       return res.status(404).json({ success: false, error: 'Order not found' });
+//     }
+
+//     const nonEditableStatuses = [
+//       'courier_assigned', 'ready_to_ship', 'shipped', 'out_for_delivery',
+//       'delivered', 'partial_delivery', 'cancelled', 'rejected', 'refunded', 'returned'
+//     ];
+    
+//     if (nonEditableStatuses.includes(order.orderStatus)) {
+//       return res.status(400).json({
+//         success: false,
+//         error: `Order status is '${order.orderStatus}'. Cannot update at this stage.`
+//       });
+//     }
+
+//     if (!items || items.length === 0) {
+//       return res.status(400).json({ 
+//         success: false, 
+//         error: 'Order must have at least one item' 
+//       });
+//     }
+
+//     const productIds = items.map(item => item.productId).filter(id => id);
+    
+//     // ============================================================
+//     // ✅ STEP 1: FETCH ALL PRODUCTS - SINGLE SOURCE OF TRUTH
+//     // ============================================================
+//     const products = await Product.find({
+//       _id: { $in: productIds }
+//     });
+    
+//     const productMap = {};
+//     products.forEach(product => {
+//       productMap[product._id.toString()] = product;
+//     });
+
+//     // Validate stock
+//     for (const item of items) {
+//       if (!item.productId) continue;
+      
+//       const product = productMap[item.productId.toString()];
+//       if (!product) {
+//         return res.status(404).json({ 
+//           success: false, 
+//           error: `Product "${item.productName}" not found` 
+//         });
+//       }
+      
+//       const totalQuantityForProduct = items
+//         .filter(i => i.productId && i.productId.toString() === item.productId.toString())
+//         .reduce((sum, i) => sum + (i.quantity || 0), 0);
+      
+//       if (totalQuantityForProduct > product.stockQuantity) {
+//         return res.status(400).json({
+//           success: false,
+//           error: `"${product.productName}": Total quantity (${totalQuantityForProduct}) exceeds available stock (${product.stockQuantity})`
+//         });
+//       }
+//     }
+
+//     if (customerInfo) {
+//       order.customerInfo = {
+//         ...order.customerInfo.toObject ? order.customerInfo.toObject() : order.customerInfo,
+//         ...customerInfo
+//       };
+//     }
+
+//     if (deliveryNote !== undefined) {
+//       order.deliveryNote = deliveryNote;
+//     }
+
+//     // ============================================================
+//     // ✅ STEP 2: PROCESS ITEMS WITH AUTHORITATIVE IMAGES
+//     // ============================================================
+//     const processedItems = items.map(item => {
+//       const productData = item.productId ? 
+//         productMap[item.productId.toString()] : 
+//         null;
+      
+//       let productSlug = item.productSlug;
+//       if (!productSlug && item.productName) {
+//         productSlug = item.productName
+//           .toLowerCase()
+//           .replace(/[^a-z0-9]+/g, '-')
+//           .replace(/^-+|-+$/g, '');
+//       }
+//       if (!productSlug) {
+//         productSlug = 'unknown-product';
+//       }
+      
+//       const isSubVariant = !!(item.subVariantId && item.subVariantId !== 'null' && item.subVariantId !== '');
+//       const isVariant = !!(item.variantId && item.variantId !== 'null' && item.variantId !== '');
+      
+//       let finalRegularPrice = item.regularPrice || productData?.regularPrice || 0;
+//       let finalDiscountPrice = item.discountPrice || productData?.discountPrice || 0;
+      
+//       if (isSubVariant) {
+//         if (item.variantDiscountPrice && item.variantDiscountPrice > 0) {
+//           finalDiscountPrice = item.variantDiscountPrice;
+//           finalRegularPrice = item.variantRegularPrice || item.regularPrice || productData?.regularPrice || 0;
+//         } else if (item.variantRegularPrice && item.variantRegularPrice > 0) {
+//           finalRegularPrice = item.variantRegularPrice;
+//         }
+//       } else if (isVariant) {
+//         if (item.variantDiscountPrice && item.variantDiscountPrice > 0) {
+//           finalDiscountPrice = item.variantDiscountPrice;
+//           finalRegularPrice = item.variantRegularPrice || item.regularPrice || productData?.regularPrice || 0;
+//         } else if (item.variantRegularPrice && item.variantRegularPrice > 0) {
+//           finalRegularPrice = item.variantRegularPrice;
+//         }
+//       }
+      
+//       // ✅ Get the main product image from the product document
+//       let mainImage = productData?.images?.[0]?.url || item.image || '';
+      
+//       // ✅ Get variant and sub-variant images from the product document
+//       let variantImage = '';
+//       let subVariantImage = '';
+      
+//       if (isVariant || isSubVariant) {
+//         // Find the variant in the product document
+//         let matchedVariant = null;
+//         if (productData?.variantTypes) {
+//           for (const vt of productData.variantTypes) {
+//             const found = (vt.variants || []).find(v => 
+//               v.id === item.variantId || v._id?.toString() === item.variantId
+//             );
+//             if (found) {
+//               matchedVariant = found;
+//               break;
+//             }
+//           }
+//         }
+        
+//         if (matchedVariant) {
+//           // Get variant image
+//           if (matchedVariant.images && matchedVariant.images[0]) {
+//             variantImage = matchedVariant.images[0];
+//           } else if (matchedVariant.image) {
+//             variantImage = matchedVariant.image;
+//           }
+          
+//           // If sub-variant, find it and get its image
+//           if (isSubVariant && matchedVariant.subVariants) {
+//             const matchedSubVariant = matchedVariant.subVariants.find(sv => 
+//               sv.id === item.subVariantId || sv._id?.toString() === item.subVariantId
+//             );
+//             if (matchedSubVariant) {
+//               if (matchedSubVariant.images && matchedSubVariant.images[0]) {
+//                 subVariantImage = matchedSubVariant.images[0];
+//               } else if (matchedSubVariant.image) {
+//                 subVariantImage = matchedSubVariant.image;
+//               }
+//             }
+//           }
+//         }
+//       }
+      
+//       // Build nested variant details with proper images
+//       const variantDetails = [];
+//       if (isVariant || isSubVariant) {
+//         const variantDetail = {
+//           variantId: item.variantId || null,
+//           variantName: item.variantName || null,
+//           variantType: item.variantType || null,
+//           variantRegularPrice: finalRegularPrice,
+//           variantDiscountPrice: finalDiscountPrice,
+//           selectedColor: item.selectedColor || null,
+//           quantity: item.quantity || 0,
+//           // ✅ Use variant's own image
+//           image: variantImage || item.variantImage || '',
+//           subVariants: []
+//         };
+        
+//         if (isSubVariant) {
+//           variantDetail.subVariants.push({
+//             subVariantId: item.subVariantId,
+//             subVariantName: item.subVariantName,
+//             subVariantRegularPrice: finalRegularPrice,
+//             subVariantDiscountPrice: finalDiscountPrice,
+//             selectedColor: item.selectedColor || null,
+//             quantity: item.quantity || 0,
+//             // ✅ Use sub-variant's own image
+//             image: subVariantImage || item.image || ''
+//           });
+//         }
+        
+//         variantDetails.push(variantDetail);
+//       }
+      
+//       return {
+//         productId: item.productId,
+//         productName: item.productName || 'Unknown Product',
+//         productSlug: productSlug,
+//         // ✅ Use the main product image from database
+//         image: mainImage,
+//         regularPrice: finalRegularPrice,
+//         discountPrice: finalDiscountPrice,
+//         costPerItem: item.costPerItem || productData?.costPerItem || 0,
+//         buyingPrice: item.buyingPrice || productData?.buyingPrice || 0,
+//         quantity: item.quantity || 1,
+//         stockQuantity: item.stockQuantity || productData?.stockQuantity || 0,
+//         unit: item.unit || productData?.unit || 'pcs',
+//         selectedColor: item.selectedColor || null,
+//         colors: item.colors || [],
+//         variantDetails: variantDetails
+//       };
+//     });
+
+//     order.items = processedItems;
+
+//     const oldDiscount = order.discount || 0;
+//     order.discount = discount || 0;
+
+//     let subtotal = 0;
+//     order.items.forEach(item => {
+//       const price = item.discountPrice > 0 ? item.discountPrice : item.regularPrice;
+//       subtotal += price * (item.quantity || 0);
+//     });
+
+//     order.subtotal = subtotal;
+//     const calculatedTotal = subtotal + (order.shippingCost || 0) - (order.discount || 0);
+//     order.total = Math.max(0, calculatedTotal);
+
+//     let statusNote = `Order updated by admin: `;
+//     if (items.length !== (order.items ? order.items.length : 0)) {
+//       statusNote += `Items updated (${items.length} items). `;
+//     }
+//     if (discount !== oldDiscount) {
+//       statusNote += `Discount changed from ৳${oldDiscount.toFixed(2)} to ৳${(discount || 0).toFixed(2)}. `;
+//     }
+//     if (discountNote) {
+//       statusNote += `Note: ${discountNote}`;
+//     }
+
+//     order.addStatusHistory(
+//       order.orderStatus,
+//       statusNote,
+//       req.user?._id,
+//       req.user?.role || 'admin'
+//     );
+
+//     await order.save();
+
+//     await order.populate([
+//       { path: 'userId', select: 'name email phone' },
+//       { path: 'statusHistory.updatedBy', select: 'email name contactPerson' }
+//     ]);
+
+//     res.json({
+//       success: true,
+//       data: order,
+//       message: 'Order updated successfully'
+//     });
+
+//   } catch (error) {
+//     console.error('Bulk update order error:', error);
+//     res.status(500).json({ success: false, error: error.message });
+//   }
+// };
+
+
+// ========== BULK UPDATE ORDER - CLEAN VERSION (FIXED IMAGES + STOCK SYNC) ==========
 const bulkUpdateOrder = async (req, res) => {
   try {
     const { id } = req.params;
-    const { 
-      customerInfo, 
-      items, 
-      discount, 
-      discountNote, 
-      deliveryNote 
+    const {
+      customerInfo,
+      items,
+      discount,
+      discountNote,
+      deliveryNote,
     } = req.body;
 
     const order = await Order.findById(id);
@@ -4135,81 +4798,98 @@ const bulkUpdateOrder = async (req, res) => {
     }
 
     const nonEditableStatuses = [
-      'courier_assigned', 'ready_to_ship', 'shipped', 'out_for_delivery',
-      'delivered', 'partial_delivery', 'cancelled', 'rejected', 'refunded', 'returned'
+      'courier_assigned',
+      'ready_to_ship',
+      'shipped',
+      'out_for_delivery',
+      'delivered',
+      'partial_delivery',
+      'cancelled',
+      'rejected',
+      'refunded',
+      'returned',
     ];
-    
+
     if (nonEditableStatuses.includes(order.orderStatus)) {
       return res.status(400).json({
         success: false,
-        error: `Order status is '${order.orderStatus}'. Cannot update at this stage.`
+        error: `Order status is '${order.orderStatus}'. Cannot update at this stage.`,
       });
     }
 
     if (!items || items.length === 0) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Order must have at least one item' 
+      return res.status(400).json({
+        success: false,
+        error: 'Order must have at least one item',
       });
     }
 
-    const productIds = items.map(item => item.productId).filter(id => id);
-    
+    const productIds = items.map((item) => item.productId).filter((id) => id);
+
     // ============================================================
     // ✅ STEP 1: FETCH ALL PRODUCTS - SINGLE SOURCE OF TRUTH
     // ============================================================
     const products = await Product.find({
-      _id: { $in: productIds }
+      _id: { $in: productIds },
     });
-    
+
     const productMap = {};
-    products.forEach(product => {
+    products.forEach((product) => {
       productMap[product._id.toString()] = product;
     });
 
-    // Validate stock
-    for (const item of items) {
-      if (!item.productId) continue;
-      
-      const product = productMap[item.productId.toString()];
+    // ============================================================
+    // ✅ STEP 1b: SNAPSHOT OLD QUANTITIES (before any mutation)
+    // ============================================================
+    const oldItemsSnapshot = order.items.map((it) =>
+      it.toObject ? it.toObject() : it
+    );
+
+    // ============================================================
+    // ✅ STEP 1c: VALIDATE STOCK — using OLD order consumption
+    // Effective available = current stock + (qty currently in this
+    // order for that line). This lets swaps/increases pass even if
+    // the stock was already decremented by the original order.
+    // ============================================================
+    const oldQtyMap = flattenOrderItemsForStockDiff(oldItemsSnapshot);
+    const newQtyMap = flattenOrderItemsForStockDiff(items);
+
+    for (const [key, newEntry] of newQtyMap.entries()) {
+      const productId = newEntry.productId?.toString();
+      const product = productMap[productId];
       if (!product) {
-        return res.status(404).json({ 
-          success: false, 
-          error: `Product "${item.productName}" not found` 
-        });
-      }
-      
-      const totalQuantityForProduct = items
-        .filter(i => i.productId && i.productId.toString() === item.productId.toString())
-        .reduce((sum, i) => sum + (i.quantity || 0), 0);
-      
-      if (totalQuantityForProduct > product.stockQuantity) {
-        return res.status(400).json({
+        return res.status(404).json({
           success: false,
-          error: `"${product.productName}": Total quantity (${totalQuantityForProduct}) exceeds available stock (${product.stockQuantity})`
+          error: `Product "${newEntry.productName || 'Unknown'}" not found`,
         });
       }
-    }
 
-    if (customerInfo) {
-      order.customerInfo = {
-        ...order.customerInfo.toObject ? order.customerInfo.toObject() : order.customerInfo,
-        ...customerInfo
-      };
-    }
+      // For plain / color products, validate against base stock + what
+      // this order already holds.
+      if (!newEntry.variantId) {
+        const alreadyInOrder = oldQtyMap.get(key)?.quantity || 0;
+        const effectiveAvailable = product.stockQuantity + alreadyInOrder;
 
-    if (deliveryNote !== undefined) {
-      order.deliveryNote = deliveryNote;
+        if (newEntry.quantity > effectiveAvailable) {
+          return res.status(400).json({
+            success: false,
+            error: `"${product.productName}": requested quantity (${newEntry.quantity}) exceeds available stock (${effectiveAvailable})`,
+          });
+        }
+      }
+      // For variants / sub-variants we rely on the original stock
+      // validation done later in adjustProductStockForItem (it clamps
+      // at 0) — the UI already limits variants to stockQuantity.
     }
 
     // ============================================================
     // ✅ STEP 2: PROCESS ITEMS WITH AUTHORITATIVE IMAGES
     // ============================================================
-    const processedItems = items.map(item => {
-      const productData = item.productId ? 
-        productMap[item.productId.toString()] : 
-        null;
-      
+    const processedItems = items.map((item) => {
+      const productData = item.productId
+        ? productMap[item.productId.toString()]
+        : null;
+
       let productSlug = item.productSlug;
       if (!productSlug && item.productName) {
         productSlug = item.productName
@@ -4220,43 +4900,61 @@ const bulkUpdateOrder = async (req, res) => {
       if (!productSlug) {
         productSlug = 'unknown-product';
       }
-      
-      const isSubVariant = !!(item.subVariantId && item.subVariantId !== 'null' && item.subVariantId !== '');
-      const isVariant = !!(item.variantId && item.variantId !== 'null' && item.variantId !== '');
-      
+
+      const isSubVariant = !!(
+        item.subVariantId &&
+        item.subVariantId !== 'null' &&
+        item.subVariantId !== ''
+      );
+      const isVariant = !!(
+        item.variantId &&
+        item.variantId !== 'null' &&
+        item.variantId !== ''
+      );
+
       let finalRegularPrice = item.regularPrice || productData?.regularPrice || 0;
-      let finalDiscountPrice = item.discountPrice || productData?.discountPrice || 0;
-      
+      let finalDiscountPrice =
+        item.discountPrice || productData?.discountPrice || 0;
+
       if (isSubVariant) {
         if (item.variantDiscountPrice && item.variantDiscountPrice > 0) {
           finalDiscountPrice = item.variantDiscountPrice;
-          finalRegularPrice = item.variantRegularPrice || item.regularPrice || productData?.regularPrice || 0;
+          finalRegularPrice =
+            item.variantRegularPrice ||
+            item.regularPrice ||
+            productData?.regularPrice ||
+            0;
         } else if (item.variantRegularPrice && item.variantRegularPrice > 0) {
           finalRegularPrice = item.variantRegularPrice;
         }
       } else if (isVariant) {
         if (item.variantDiscountPrice && item.variantDiscountPrice > 0) {
           finalDiscountPrice = item.variantDiscountPrice;
-          finalRegularPrice = item.variantRegularPrice || item.regularPrice || productData?.regularPrice || 0;
+          finalRegularPrice =
+            item.variantRegularPrice ||
+            item.regularPrice ||
+            productData?.regularPrice ||
+            0;
         } else if (item.variantRegularPrice && item.variantRegularPrice > 0) {
           finalRegularPrice = item.variantRegularPrice;
         }
       }
-      
-      // ✅ Get the main product image from the product document
+
+      // ✅ Main product image from DB (authoritative)
       let mainImage = productData?.images?.[0]?.url || item.image || '';
-      
-      // ✅ Get variant and sub-variant images from the product document
+
+      // ✅ Variant + sub-variant images from product document
       let variantImage = '';
       let subVariantImage = '';
-      
+
       if (isVariant || isSubVariant) {
-        // Find the variant in the product document
         let matchedVariant = null;
         if (productData?.variantTypes) {
           for (const vt of productData.variantTypes) {
-            const found = (vt.variants || []).find(v => 
-              v.id === item.variantId || v._id?.toString() === item.variantId
+            const found = (vt.variants || []).find(
+              (v) =>
+                v.id === item.variantId ||
+                v._id?.toString() === item.variantId
             );
             if (found) {
               matchedVariant = found;
@@ -4264,22 +4962,25 @@ const bulkUpdateOrder = async (req, res) => {
             }
           }
         }
-        
+
         if (matchedVariant) {
-          // Get variant image
           if (matchedVariant.images && matchedVariant.images[0]) {
             variantImage = matchedVariant.images[0];
           } else if (matchedVariant.image) {
             variantImage = matchedVariant.image;
           }
-          
-          // If sub-variant, find it and get its image
+
           if (isSubVariant && matchedVariant.subVariants) {
-            const matchedSubVariant = matchedVariant.subVariants.find(sv => 
-              sv.id === item.subVariantId || sv._id?.toString() === item.subVariantId
+            const matchedSubVariant = matchedVariant.subVariants.find(
+              (sv) =>
+                sv.id === item.subVariantId ||
+                sv._id?.toString() === item.subVariantId
             );
             if (matchedSubVariant) {
-              if (matchedSubVariant.images && matchedSubVariant.images[0]) {
+              if (
+                matchedSubVariant.images &&
+                matchedSubVariant.images[0]
+              ) {
                 subVariantImage = matchedSubVariant.images[0];
               } else if (matchedSubVariant.image) {
                 subVariantImage = matchedSubVariant.image;
@@ -4288,7 +4989,7 @@ const bulkUpdateOrder = async (req, res) => {
           }
         }
       }
-      
+
       // Build nested variant details with proper images
       const variantDetails = [];
       if (isVariant || isSubVariant) {
@@ -4300,11 +5001,10 @@ const bulkUpdateOrder = async (req, res) => {
           variantDiscountPrice: finalDiscountPrice,
           selectedColor: item.selectedColor || null,
           quantity: item.quantity || 0,
-          // ✅ Use variant's own image
           image: variantImage || item.variantImage || '',
-          subVariants: []
+          subVariants: [],
         };
-        
+
         if (isSubVariant) {
           variantDetail.subVariants.push({
             subVariantId: item.subVariantId,
@@ -4313,57 +5013,102 @@ const bulkUpdateOrder = async (req, res) => {
             subVariantDiscountPrice: finalDiscountPrice,
             selectedColor: item.selectedColor || null,
             quantity: item.quantity || 0,
-            // ✅ Use sub-variant's own image
-            image: subVariantImage || item.image || ''
+            image: subVariantImage || item.image || '',
           });
         }
-        
+
         variantDetails.push(variantDetail);
       }
-      
+
       return {
         productId: item.productId,
         productName: item.productName || 'Unknown Product',
         productSlug: productSlug,
-        // ✅ Use the main product image from database
         image: mainImage,
         regularPrice: finalRegularPrice,
         discountPrice: finalDiscountPrice,
         costPerItem: item.costPerItem || productData?.costPerItem || 0,
         buyingPrice: item.buyingPrice || productData?.buyingPrice || 0,
         quantity: item.quantity || 1,
-        stockQuantity: item.stockQuantity || productData?.stockQuantity || 0,
+        stockQuantity:
+          item.stockQuantity || productData?.stockQuantity || 0,
         unit: item.unit || productData?.unit || 'pcs',
         selectedColor: item.selectedColor || null,
         colors: item.colors || [],
-        variantDetails: variantDetails
+        variantDetails: variantDetails,
       };
     });
 
+    // ============================================================
+    // ✅ STEP 3: RECONCILE STOCK
+    // Diff old order.items vs processedItems and adjust Product
+    // stock accordingly. Must run BEFORE replacing order.items.
+    // ============================================================
+    const stockResult = await applyStockDiffForOrderEdit(
+      oldItemsSnapshot,
+      processedItems
+    );
+
+    if (stockResult.errors.length > 0) {
+      console.warn(
+        `Stock reconciliation completed with ${stockResult.errors.length} error(s):`,
+        stockResult.errors
+      );
+    }
+
+    console.log(
+      `📦 Stock reconciled for order ${order.orderNumber}: ${stockResult.applied} line(s) updated`
+    );
+
+    // ============================================================
+    // ✅ STEP 4: APPLY ORDER CHANGES
+    // ============================================================
     order.items = processedItems;
+
+    if (customerInfo) {
+      order.customerInfo = {
+        ...(order.customerInfo.toObject
+          ? order.customerInfo.toObject()
+          : order.customerInfo),
+        ...customerInfo,
+      };
+    }
+
+    if (deliveryNote !== undefined) {
+      order.deliveryNote = deliveryNote;
+    }
 
     const oldDiscount = order.discount || 0;
     order.discount = discount || 0;
 
+    // Recompute subtotal from the new items
     let subtotal = 0;
-    order.items.forEach(item => {
-      const price = item.discountPrice > 0 ? item.discountPrice : item.regularPrice;
+    order.items.forEach((item) => {
+      const price =
+        item.discountPrice > 0 ? item.discountPrice : item.regularPrice;
       subtotal += price * (item.quantity || 0);
     });
 
     order.subtotal = subtotal;
-    const calculatedTotal = subtotal + (order.shippingCost || 0) - (order.discount || 0);
+    const calculatedTotal =
+      subtotal + (order.shippingCost || 0) - (order.discount || 0);
     order.total = Math.max(0, calculatedTotal);
 
+    // ============================================================
+    // ✅ STEP 5: STATUS HISTORY NOTE
+    // ============================================================
     let statusNote = `Order updated by admin: `;
-    if (items.length !== (order.items ? order.items.length : 0)) {
-      statusNote += `Items updated (${items.length} items). `;
-    }
+    statusNote += `Items: ${items.length}. `;
     if (discount !== oldDiscount) {
-      statusNote += `Discount changed from ৳${oldDiscount.toFixed(2)} to ৳${(discount || 0).toFixed(2)}. `;
+      statusNote += `Discount changed from ৳${oldDiscount.toFixed(
+        2
+      )} to ৳${(discount || 0).toFixed(2)}. `;
     }
     if (discountNote) {
       statusNote += `Note: ${discountNote}`;
+    }
+    if (stockResult.applied > 0) {
+      statusNote += ` | Stock reconciled on ${stockResult.applied} line(s).`;
     }
 
     order.addStatusHistory(
@@ -4377,15 +5122,18 @@ const bulkUpdateOrder = async (req, res) => {
 
     await order.populate([
       { path: 'userId', select: 'name email phone' },
-      { path: 'statusHistory.updatedBy', select: 'email name contactPerson' }
+      { path: 'statusHistory.updatedBy', select: 'email name contactPerson' },
     ]);
 
     res.json({
       success: true,
       data: order,
-      message: 'Order updated successfully'
+      message: 'Order updated successfully',
+      stockSync: {
+        applied: stockResult.applied,
+        errors: stockResult.errors,
+      },
     });
-
   } catch (error) {
     console.error('Bulk update order error:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -5502,6 +6250,693 @@ const updateReturnStatus = async (req, res) => {
   }
 };
 
+// ============================================================
+// ✅ DUPLICATE CUSTOMER - Search by name/email & get order history
+// ============================================================
+const searchDuplicateCustomers = async (req, res) => {
+  try {
+    const { query } = req.query;
+
+    if (!query || query.trim().length < 1) {
+      return res.status(400).json({
+        success: false,
+        error: 'Search query is required (name or email)'
+      });
+    }
+
+    const searchRegex = new RegExp(query.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+
+    // Find all orders matching customer name OR email
+    const orders = await Order.find({
+      $or: [
+        { 'customerInfo.fullName': searchRegex },
+        { 'customerInfo.email': searchRegex }
+      ]
+    })
+      .sort({ createdAt: -1 })
+      .select(
+        'orderNumber orderStatus orderPlatform paymentStatus paymentMethod ' +
+        'total paidAmount returnedAmount refundableAmount ' +
+        'customerInfo createdAt updatedAt deliveredAt cancelledAt returnedAt ' +
+        'items deliveryItems deliveryService trackingNumber statusHistory'
+      );
+
+    if (!orders || orders.length === 0) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          customers: [],
+          orders: [],
+          summary: {
+            totalOrders: 0,
+            placed: 0,
+            delivered: 0,
+            cancelled: 0,
+            partialDelivered: 0,
+            returned: 0,
+            rejected: 0,
+            totalPaidAmount: 0,
+            totalOrderAmount: 0
+          }
+        },
+        message: 'No orders found matching your search'
+      });
+    }
+
+    // Group orders by unique customer (name + phone OR email)
+    const customerMap = new Map();
+
+    orders.forEach((order) => {
+      const key = `${(order.customerInfo?.fullName || '').toLowerCase().trim()}_${(order.customerInfo?.phone || '').trim()}`;
+
+      if (!customerMap.has(key)) {
+        customerMap.set(key, {
+          fullName: order.customerInfo?.fullName || 'Unknown',
+          email: order.customerInfo?.email || '',
+          phone: order.customerInfo?.phone || '',
+          division: order.customerInfo?.division || '',
+          city: order.customerInfo?.city || '',
+          address: order.customerInfo?.address || '',
+          orders: []
+        });
+      }
+      customerMap.get(key).orders.push(order);
+    });
+
+    // Build summary stats across ALL matched orders
+    const summary = {
+      totalOrders: orders.length,
+      placed: 0,
+      delivered: 0,
+      cancelled: 0,
+      partialDelivered: 0,
+      returned: 0,
+      rejected: 0,
+      totalPaidAmount: 0,
+      totalOrderAmount: 0
+    };
+
+    orders.forEach((order) => {
+      switch (order.orderStatus) {
+        case 'placed':
+        case 'follow_up':
+        case 'accepted':
+        case 'approved':
+        case 'hold':
+        case 'processing':
+        case 'ready_to_ship':
+        case 'courier_assigned':
+        case 'reminder':
+        case 'shipped':
+        case 'out_for_delivery':
+          summary.placed++;
+          break;
+        case 'delivered':
+          summary.delivered++;
+          break;
+        case 'cancelled':
+          summary.cancelled++;
+          break;
+        case 'partial_delivery':
+          summary.partialDelivered++;
+          break;
+        case 'returned':
+          summary.returned++;
+          break;
+        case 'rejected':
+          summary.rejected++;
+          break;
+      }
+
+      summary.totalPaidAmount += order.paidAmount || 0;
+      summary.totalOrderAmount += order.total || 0;
+    });
+
+    // Format orders for frontend
+    const formattedOrders = orders.map((order) => ({
+      _id: order._id,
+      orderNumber: order.orderNumber,
+      orderStatus: order.orderStatus,
+      orderPlatform: order.orderPlatform || 'website',
+      paymentStatus: order.paymentStatus,
+      paymentMethod: order.paymentMethod,
+      total: order.total,
+      paidAmount: order.paidAmount || 0,
+      returnedAmount: order.returnedAmount || 0,
+      refundableAmount: order.refundableAmount || 0,
+      customerInfo: order.customerInfo,
+      createdAt: order.createdAt,
+      deliveredAt: order.deliveredAt,
+      cancelledAt: order.cancelledAt,
+      returnedAt: order.returnedAt,
+      trackingNumber: order.trackingNumber,
+      items: order.items,
+      deliveryItems: order.deliveryItems,
+      deliveryService: order.deliveryService,
+      statusHistory: order.statusHistory
+    }));
+
+    const customers = Array.from(customerMap.values()).map((c) => ({
+      ...c,
+      orderCount: c.orders.length,
+      totalSpent: c.orders.reduce((sum, o) => sum + (o.paidAmount || 0), 0),
+      orders: c.orders.map((o) => ({
+        _id: o._id,
+        orderNumber: o.orderNumber,
+        orderStatus: o.orderStatus,
+        orderPlatform: o.orderPlatform || 'website',
+        total: o.total,
+        paidAmount: o.paidAmount || 0,
+        createdAt: o.createdAt
+      }))
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        customers,
+        orders: formattedOrders,
+        summary
+      },
+      message: `Found ${orders.length} order(s) for ${customers.length} customer(s)`
+    });
+  } catch (error) {
+    console.error('Search duplicate customers error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// ============================================================
+// ✅ GET SINGLE ORDER DETAILS (for modal) - reuses existing getOrderById
+// but returns full populated details
+// ============================================================
+const getDuplicateCustomerOrderDetails = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const order = await Order.findById(id)
+      .populate('statusHistory.updatedBy', 'email name contactPerson');
+
+    if (!order) {
+      return res.status(404).json({ success: false, error: 'Order not found' });
+    }
+
+    res.json({ success: true, data: order });
+  } catch (error) {
+    console.error('Get duplicate customer order details error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+// ============================================================
+// HELPERS (same as profitMarginController — reused here)
+// ============================================================
+const getVariantCostFromProduct = (product, variantId, subVariantId) => {
+  if (!product || !product.variantTypes || !variantId) return 0;
+
+  for (const vt of product.variantTypes) {
+    for (const v of (vt.variants || [])) {
+      if (v.id === variantId) {
+        if (subVariantId && v.subVariants) {
+          const sv = v.subVariants.find(s => s.id === subVariantId);
+          if (sv) return Number(sv.costPerItem) || 0;
+        }
+        return Number(v.costPerItem) || 0;
+      }
+    }
+  }
+  return 0;
+};
+
+const getPlainItemSellingPrice = (item) => {
+  if (item.discountPrice > 0) return Number(item.discountPrice);
+  return Number(item.regularPrice) || 0;
+};
+
+const buildDeliveredQuantityMap = (order) => {
+  if (!order.deliveryItems || order.deliveryItems.length === 0) return null;
+
+  const map = new Map();
+  order.deliveryItems.forEach((di) => {
+    const deliveredQty = Number(di.deliveredQuantity) || 0;
+    if (deliveredQty <= 0) return;
+
+    const productId = di.productId?.toString() || '';
+    const variantId = di.variantId || null;
+    const subVariantId = di.subVariantId || null;
+    const selectedColor = di.selectedColor || null;
+
+    let key;
+    if (subVariantId) key = `${productId}|${variantId}|${subVariantId}`;
+    else if (variantId) key = `${productId}|${variantId}`;
+    else if (selectedColor) key = `${productId}|color:${selectedColor}`;
+    else key = `${productId}|plain`;
+
+    map.set(key, (map.get(key) || 0) + deliveredQty);
+  });
+
+  return map;
+};
+
+const processOrderItem = (item, productDoc, product, productImage, deliveredQtyMap = null) => {
+  let itemRevenue = 0;
+  let itemCost = 0;
+  let itemProfit = 0;
+  let itemQuantity = 0;
+
+  const productIdStr = (productDoc?._id || item.productId)?.toString() || '';
+
+  const variantDetails = item.variantDetails || [];
+  const hasVariantDetails = variantDetails.length > 0;
+
+  if (hasVariantDetails) {
+    product.hasVariants = true;
+
+    variantDetails.forEach(vd => {
+      const variantId = vd.variantId;
+      const subVariants = vd.subVariants || [];
+      const hasSubVariants = subVariants.length > 0;
+
+      if (hasSubVariants) {
+        product.hasSubVariants = true;
+
+        subVariants.forEach(sv => {
+          let qty;
+          if (deliveredQtyMap) {
+            const key = `${productIdStr}|${variantId}|${sv.subVariantId}`;
+            qty = deliveredQtyMap.get(key) || 0;
+          } else {
+            qty = Number(sv.quantity) || 0;
+          }
+          if (qty <= 0) return;
+
+          const sellingPrice = Number(sv.subVariantDiscountPrice) > 0
+            ? Number(sv.subVariantDiscountPrice)
+            : (Number(sv.subVariantRegularPrice) || 0);
+
+          let costPerItem = getVariantCostFromProduct(productDoc, variantId, sv.subVariantId);
+          if (costPerItem === 0) {
+            costPerItem = (productDoc?.costPerItem || productDoc?.buyingPrice || 0);
+          }
+
+          const revenue = sellingPrice * qty;
+          const cost = costPerItem * qty;
+          const profit = revenue - cost;
+
+          itemRevenue += revenue;
+          itemCost += cost;
+          itemProfit += profit;
+          itemQuantity += qty;
+        });
+      } else {
+        let qty;
+        if (deliveredQtyMap) {
+          const key = `${productIdStr}|${variantId}`;
+          qty = deliveredQtyMap.get(key) || 0;
+        } else {
+          qty = Number(vd.quantity) || 0;
+        }
+        if (qty <= 0) return;
+
+        const sellingPrice = Number(vd.variantDiscountPrice) > 0
+          ? Number(vd.variantDiscountPrice)
+          : (Number(vd.variantRegularPrice) || 0);
+
+        let costPerItem = getVariantCostFromProduct(productDoc, variantId, null);
+        if (costPerItem === 0) {
+          costPerItem = (productDoc?.costPerItem || productDoc?.buyingPrice || 0);
+        }
+
+        const revenue = sellingPrice * qty;
+        const cost = costPerItem * qty;
+        const profit = revenue - cost;
+
+        itemRevenue += revenue;
+        itemCost += cost;
+        itemProfit += profit;
+        itemQuantity += qty;
+      }
+    });
+  } else {
+    // Plain product (colors or simple quantity)
+    const selectedColor = item.selectedColor || null;
+
+    let qty;
+    if (deliveredQtyMap) {
+      let key;
+      if (selectedColor) key = `${productIdStr}|color:${selectedColor}`;
+      else key = `${productIdStr}|plain`;
+      qty = deliveredQtyMap.get(key) || 0;
+    } else {
+      qty = Number(item.quantity) || 0;
+    }
+
+    if (qty <= 0) {
+      return { itemRevenue: 0, itemCost: 0, itemProfit: 0, itemQuantity: 0 };
+    }
+
+    const sellingPrice = getPlainItemSellingPrice(item);
+    const costPerItem = (productDoc?.costPerItem || productDoc?.buyingPrice)
+      || item.costPerItem
+      || item.buyingPrice
+      || 0;
+
+    itemRevenue = sellingPrice * qty;
+    itemCost = costPerItem * qty;
+    itemProfit = itemRevenue - itemCost;
+    itemQuantity = qty;
+  }
+
+  return { itemRevenue, itemCost, itemProfit, itemQuantity };
+};
+
+// ============================================================
+// ✅ PLATFORM SALE DETAILS — matches Profit Margin calculation exactly
+// ============================================================
+const getPlatformSaleDetails = async (req, res) => {
+  try {
+    const {
+      platform = 'website',
+      startDate,
+      endDate,
+      page = 1,
+      limit = 20,
+      search,
+      orderStatus
+    } = req.query;
+
+    const validPlatforms = ['website', 'facebook', 'instagram', 'showroom'];
+
+    // ============================================================
+    // Date filter (same shape as profit margin)
+    // ============================================================
+    let dateFilter = {};
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      dateFilter = { createdAt: { $gte: start, $lte: end } };
+    } else if (startDate) {
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      dateFilter = { createdAt: { $gte: start } };
+    } else if (endDate) {
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      dateFilter = { createdAt: { $lte: end } };
+    }
+
+    // ============================================================
+    // 1) PLATFORM COUNTS (all platforms, all statuses — for tab badges)
+    // ============================================================
+    const platformSummaryAgg = await Order.aggregate([
+      { $match: dateFilter },
+      {
+        $group: {
+          _id: '$orderPlatform',
+          totalOrders: { $sum: 1 },
+          delivered: {
+            $sum: { $cond: [{ $eq: ['$orderStatus', 'delivered'] }, 1, 0] }
+          },
+          partialDelivered: {
+            $sum: { $cond: [{ $eq: ['$orderStatus', 'partial_delivery'] }, 1, 0] }
+          },
+          cancelled: {
+            $sum: { $cond: [{ $eq: ['$orderStatus', 'cancelled'] }, 1, 0] }
+          },
+          returned: {
+            $sum: { $cond: [{ $eq: ['$orderStatus', 'returned'] }, 1, 0] }
+          },
+          rejected: {
+            $sum: { $cond: [{ $eq: ['$orderStatus', 'rejected'] }, 1, 0] }
+          },
+          totalRevenue: { $sum: '$total' },
+          totalPaid: { $sum: '$paidAmount' }
+        }
+      }
+    ]);
+
+    const platformSummary = {};
+    validPlatforms.forEach((p) => {
+      platformSummary[p] = {
+        platform: p,
+        totalOrders: 0,
+        delivered: 0,
+        partialDelivered: 0,
+        cancelled: 0,
+        returned: 0,
+        rejected: 0,
+        totalRevenue: 0,
+        totalPaid: 0,
+        totalRevenueDelivered: 0,
+        totalCostDelivered: 0,
+        totalProfit: 0,
+        profitMargin: '0.00',
+        itemsCount: 0
+      };
+    });
+
+    platformSummaryAgg.forEach((row) => {
+      const p = row._id || 'website';
+      if (!platformSummary[p]) return;
+      platformSummary[p].totalOrders = row.totalOrders;
+      platformSummary[p].delivered = row.delivered;
+      platformSummary[p].partialDelivered = row.partialDelivered;
+      platformSummary[p].cancelled = row.cancelled;
+      platformSummary[p].returned = row.returned;
+      platformSummary[p].rejected = row.rejected;
+      platformSummary[p].totalRevenue = Math.round(row.totalRevenue * 100) / 100;
+      platformSummary[p].totalPaid = Math.round(row.totalPaid * 100) / 100;
+    });
+
+    // ============================================================
+    // 2) PROFIT PER PLATFORM
+    //     ★ Uses EXACT same query + helpers as profitMarginController
+    // ============================================================
+    const profitQuery = {
+      orderStatus: { $in: ['delivered', 'partial_delivery'] },
+      paymentStatus: { $in: ['paid', 'partial'] },
+      ...dateFilter
+    };
+
+    const profitOrders = await Order.find(profitQuery)
+      .populate('items.productId', 'costPerItem buyingPrice productName variantTypes hasVariants');
+
+    profitOrders.forEach((order) => {
+      const p = order.orderPlatform || 'website';
+      if (!platformSummary[p]) return;
+
+      // ✅ Same per-order delivered-qty map
+      const deliveredQtyMap = buildDeliveredQuantityMap(order);
+
+      // ✅ Same per-item processing; use a throw-away product container
+      //    so hasVariants / hasSubVariants don't matter here
+      const dummyProduct = { hasVariants: false, hasSubVariants: false, variantBreakdownMap: {} };
+
+      order.items.forEach((item) => {
+        const productDoc = item.productId && typeof item.productId === 'object'
+          ? item.productId
+          : null;
+        const productImage = item.image || '';
+
+        const { itemRevenue, itemCost, itemQuantity } = processOrderItem(
+          item,
+          productDoc,
+          dummyProduct,
+          productImage,
+          deliveredQtyMap
+        );
+
+        platformSummary[p].totalRevenueDelivered += itemRevenue;
+        platformSummary[p].totalCostDelivered += itemCost;
+        platformSummary[p].itemsCount += itemQuantity;
+      });
+    });
+
+    // Round & compute margins
+    Object.keys(platformSummary).forEach((p) => {
+      const s = platformSummary[p];
+      s.totalRevenueDelivered = Math.round(s.totalRevenueDelivered * 100) / 100;
+      s.totalCostDelivered = Math.round(s.totalCostDelivered * 100) / 100;
+      s.totalProfit =
+        Math.round((s.totalRevenueDelivered - s.totalCostDelivered) * 100) / 100;
+      s.profitMargin =
+        s.totalRevenueDelivered > 0
+          ? ((s.totalProfit / s.totalRevenueDelivered) * 100).toFixed(2)
+          : '0.00';
+    });
+
+    // Combined
+    let combinedRevenue = 0;
+    let combinedCost = 0;
+    Object.values(platformSummary).forEach((p) => {
+      combinedRevenue += p.totalRevenueDelivered;
+      combinedCost += p.totalCostDelivered;
+    });
+    const combinedProfit = Math.round((combinedRevenue - combinedCost) * 100) / 100;
+    const combinedMargin =
+      combinedRevenue > 0
+        ? ((combinedProfit / combinedRevenue) * 100).toFixed(2)
+        : '0.00';
+
+    // ============================================================
+    // 3) ORDERS for selected platform (paginated)
+    // ============================================================
+    const ordersQuery = {
+      ...(dateFilter.createdAt ? { createdAt: dateFilter.createdAt } : {}),
+      orderPlatform: platform
+    };
+
+    if (orderStatus && orderStatus !== 'all') {
+      ordersQuery.orderStatus = orderStatus;
+    }
+
+    if (search && search.trim()) {
+      const regex = new RegExp(search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      ordersQuery.$or = [
+        { orderNumber: regex },
+        { 'customerInfo.fullName': regex },
+        { 'customerInfo.phone': regex },
+        { 'customerInfo.email': regex }
+      ];
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const [orders, totalOrdersCount] = await Promise.all([
+      Order.find(ordersQuery)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(parseInt(limit))
+        .populate('items.productId', 'costPerItem buyingPrice productName variantTypes hasVariants')
+        .populate('statusHistory.updatedBy', 'email name contactPerson')
+        .select(
+          'orderNumber orderStatus orderPlatform paymentStatus paymentMethod ' +
+          'subtotal shippingCost discount total paidAmount returnedAmount refundableAmount ' +
+          'couponCode deliveryNote ' +
+          'customerInfo createdAt updatedAt deliveredAt cancelledAt returnedAt ' +
+          'items deliveryItems deliveryService trackingNumber statusHistory deviceInfo'
+        ),
+      Order.countDocuments(ordersQuery)
+    ]);
+
+    // ✅ Per-order profit attached to the response (for the modal)
+    const ordersWithProfit = orders.map((order) => {
+      const o = order.toObject();
+      const deliveredQtyMap = buildDeliveredQuantityMap(order);
+      const dummyProduct = { hasVariants: false, hasSubVariants: false, variantBreakdownMap: {} };
+
+      let orderRevenue = 0;
+      let orderCost = 0;
+      let orderQuantity = 0;
+
+      order.items.forEach((item) => {
+        const productDoc = item.productId && typeof item.productId === 'object'
+          ? item.productId
+          : null;
+        const productImage = item.image || '';
+
+        const { itemRevenue, itemCost, itemQuantity } = processOrderItem(
+          item,
+          productDoc,
+          dummyProduct,
+          productImage,
+          deliveredQtyMap
+        );
+
+        orderRevenue += itemRevenue;
+        orderCost += itemCost;
+        orderQuantity += itemQuantity;
+      });
+
+      o.orderRevenue = Math.round(orderRevenue * 100) / 100;
+      o.orderCost = Math.round(orderCost * 100) / 100;
+      o.orderProfit = Math.round((orderRevenue - orderCost) * 100) / 100;
+      o.orderProfitMargin =
+        orderRevenue > 0
+          ? Math.round(((orderRevenue - orderCost) / orderRevenue) * 100 * 100) / 100
+          : 0;
+      o.orderProfitQuantity = orderQuantity;
+
+      return o;
+    });
+
+    res.json({
+      success: true,
+      data: {
+        selectedPlatform: platform,
+        platforms: platformSummary,
+        combined: {
+          totalRevenueDelivered: Math.round(combinedRevenue * 100) / 100,
+          totalCostDelivered: Math.round(combinedCost * 100) / 100,
+          totalProfit: combinedProfit,
+          profitMargin: combinedMargin
+        },
+        orders: ordersWithProfit,
+        pagination: {
+          total: totalOrdersCount,
+          page: parseInt(page),
+          pages: Math.ceil(totalOrdersCount / parseInt(limit)),
+          limit: parseInt(limit)
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Get platform sale details error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// ============================================================
+// ✅ CREATE SHOWROOM ORDER (POS)
+// A thin wrapper over createOrder — forces:
+//   - orderPlatform = 'showroom'
+//   - orderStatus   = 'delivered'  (POS sales are immediate)
+//   - paymentStatus = 'paid'       (cash handed over at counter)
+//   - paymentMethod = 'cod'        (or 'online' if you later add card)
+// ============================================================
+const createShowroomOrder = async (req, res) => {
+  try {
+    // Force showroom-specific fields, then hand off to createOrder
+    req.body.orderPlatform = 'showroom';
+    req.body.orderStatus = 'delivered';
+    req.body.saveOrder = true;
+
+    // We want stock to decrement IMMEDIATELY on save
+    // (createOrder already does adjustProductStockForItem(item, -1))
+
+    // Auto-fill customer fields to avoid validation errors
+    if (!req.body.customerInfo) req.body.customerInfo = {};
+    if (!req.body.customerInfo.fullName) {
+      req.body.customerInfo.fullName = 'Showroom Walk-in Customer';
+    }
+    if (!req.body.customerInfo.phone) {
+      req.body.customerInfo.phone = 'N/A';
+    }
+    if (!req.body.customerInfo.address) {
+      req.body.customerInfo.address = 'Showroom';
+    }
+    if (!req.body.customerInfo.division) {
+      req.body.customerInfo.division = 'Showroom';
+    }
+    if (!req.body.customerInfo.city) {
+      req.body.customerInfo.city = 'Showroom';
+    }
+    if (!req.body.customerInfo.zone) {
+      req.body.customerInfo.zone = 'Showroom';
+    }
+
+    // Default shipping 0 for POS
+    if (req.body.shippingCost === undefined) req.body.shippingCost = 0;
+
+    // Delegate to createOrder
+    return await createOrder(req, res);
+  } catch (error) {
+    console.error('Create showroom order error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
 // ========== EXPORTS ==========
 module.exports = {
   createOrder,
@@ -5536,5 +6971,9 @@ module.exports = {
   getReturnedItemsOrders,
   getReturnedItemsForOrder,
   processReturnedItem,
-  updateReturnStatus
+  updateReturnStatus,
+   searchDuplicateCustomers,
+  getDuplicateCustomerOrderDetails,
+   getPlatformSaleDetails,
+   createShowroomOrder
 };

@@ -39,6 +39,10 @@ const {
   getReturnedItemsForOrder,
   processReturnedItem,
   updateReturnStatus,
+  searchDuplicateCustomers,
+  getDuplicateCustomerOrderDetails,
+  getPlatformSaleDetails,
+  createShowroomOrder
 } = require('../controllers/orderController');
 const { getProfitMarginData, getProductProfitMargin } = require('../controllers/profitMarginController');
 
@@ -114,6 +118,16 @@ router.put('/:id/bulk-update', protect, isModeratorOrAdmin, bulkUpdateOrder);
 
 // Update order discount
 router.put('/:id/discount', protect, isModeratorOrAdmin, updateOrderDiscount);
+
+// ============= DUPLICATE CUSTOMER ROUTES =============
+router.get('/duplicate-customers/search', protect, isModeratorOrAdmin, searchDuplicateCustomers);
+router.get('/duplicate-customers/order/:id', protect, isModeratorOrAdmin, getDuplicateCustomerOrderDetails);
+// ============= PLATFORM SALE DETAILS =============
+router.get('/admin/platform-sales', protect, isModeratorOrAdmin, getPlatformSaleDetails);
+
+// ============= SHOWROOM POS =============
+router.post('/showroom/pos', protect, isModeratorOrAdmin, createShowroomOrder);
+
 
 
 
