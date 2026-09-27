@@ -4,7 +4,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { protect, optionalProtect, isAdmin, isModeratorOrAdmin, isAgent } = require('../middleware/authMiddleware'); // ✅ ADD isAgent here
+const { protect, optionalProtect, isAdmin, isModeratorOrAdmin, isAgent,  authorize,  } = require('../middleware/authMiddleware'); // ✅ ADD isAgent here
 const ipMiddleware = require('../middleware/ipMiddleware');
 const {
   createOrder,
@@ -42,7 +42,8 @@ const {
   searchDuplicateCustomers,
   getDuplicateCustomerOrderDetails,
   getPlatformSaleDetails,
-  createShowroomOrder
+  createShowroomOrder,
+  getPlatformSalesTrend
 } = require('../controllers/orderController');
 const { getProfitMarginData, getProductProfitMargin } = require('../controllers/profitMarginController');
 
@@ -124,6 +125,7 @@ router.get('/duplicate-customers/search', protect, isModeratorOrAdmin, searchDup
 router.get('/duplicate-customers/order/:id', protect, isModeratorOrAdmin, getDuplicateCustomerOrderDetails);
 // ============= PLATFORM SALE DETAILS =============
 router.get('/admin/platform-sales', protect, isModeratorOrAdmin, getPlatformSaleDetails);
+router.get('/admin/platform-sales-trend', protect, authorize('super_admin', 'admin'), getPlatformSalesTrend);
 
 // ============= SHOWROOM POS =============
 router.post('/showroom/pos', protect, isModeratorOrAdmin, createShowroomOrder);

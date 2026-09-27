@@ -1713,6 +1713,184 @@ const prepareOrder = async (req, res) => {
 };
 
 // ========== TRACK ORDER BY PHONE ==========
+// const trackOrderByPhone = async (req, res) => {
+//   try {
+//     const { phone } = req.params;
+    
+//     if (!phone) {
+//       return res.status(400).json({ 
+//         success: false, 
+//         error: 'Phone number is required' 
+//       });
+//     }
+    
+//     const orders = await Order.find({
+//       'customerInfo.phone': phone
+//     })
+//     .sort({ createdAt: -1 })
+//     .select('_id orderNumber orderStatus items subtotal shippingCost discount total customerInfo createdAt deliveredAt cancelledAt statusHistory trackingNumber paymentMethod paymentStatus deliveryService');
+    
+//     if (!orders || orders.length === 0) {
+//       return res.status(404).json({ 
+//         success: false, 
+//         error: 'No orders found for this phone number' 
+//       });
+//     }
+    
+//     const statusLabels = {
+//       'placed': 'Order Placed',
+//       'follow_up': 'Follow Up',
+//       'accepted': 'Accepted',
+//       'processing': 'Processing',
+//       'shipped': 'Shipped',
+//       'out_for_delivery': 'Out for Delivery',
+//       'delivered': 'Delivered',
+//       'cancelled': 'Cancelled',
+//       'reminder': 'Reminder',
+//       'refunded': 'Refunded',
+//       'failed': 'Failed'
+//     };
+    
+//     const formattedOrders = orders.map(order => {
+//       const timeline = order.statusHistory ? order.statusHistory.map(entry => ({
+//         status: entry.status,
+//         label: statusLabels[entry.status] || entry.status,
+//         note: entry.note,
+//         timestamp: entry.timestamp,
+//         formattedDate: entry.timestamp ? new Date(entry.timestamp).toLocaleString('en-BD', {
+//           day: '2-digit',
+//           month: 'short',
+//           year: 'numeric',
+//           hour: '2-digit',
+//           minute: '2-digit'
+//         }) : null
+//       })) : [];
+      
+//       if (timeline.length === 0) {
+//         timeline.push({
+//           status: order.orderStatus,
+//           label: statusLabels[order.orderStatus] || order.orderStatus,
+//           note: `Order ${order.orderStatus}`,
+//           timestamp: order.createdAt,
+//           formattedDate: new Date(order.createdAt).toLocaleString('en-BD', {
+//             day: '2-digit',
+//             month: 'short',
+//             year: 'numeric',
+//             hour: '2-digit',
+//             minute: '2-digit'
+//           })
+//         });
+        
+//         if (order.deliveredAt) {
+//           timeline.push({
+//             status: 'delivered',
+//             label: 'Delivered',
+//             note: 'Order delivered',
+//             timestamp: order.deliveredAt,
+//             formattedDate: new Date(order.deliveredAt).toLocaleString('en-BD', {
+//               day: '2-digit',
+//               month: 'short',
+//               year: 'numeric',
+//               hour: '2-digit',
+//               minute: '2-digit'
+//             })
+//           });
+//         }
+        
+//         if (order.cancelledAt) {
+//           timeline.push({
+//             status: 'cancelled',
+//             label: 'Cancelled',
+//             note: order.cancellationReason || 'Order cancelled',
+//             timestamp: order.cancelledAt,
+//             formattedDate: new Date(order.cancelledAt).toLocaleString('en-BD', {
+//               day: '2-digit',
+//               month: 'short',
+//               year: 'numeric',
+//               hour: '2-digit',
+//               minute: '2-digit'
+//             })
+//           });
+//         }
+//       }
+      
+//       timeline.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+      
+//       // Include items with nested variants
+//       const itemsSummary = order.items.map(item => ({
+//         productId: item.productId,
+//         productName: item.productName,
+//         name: item.productName,
+//         quantity: item.quantity,
+//         price: item.discountPrice || item.regularPrice,
+//         regularPrice: item.regularPrice,
+//         discountPrice: item.discountPrice,
+//         image: item.image,
+//         unit: item.unit || 'pcs',
+//         stockQuantity: item.stockQuantity,
+//         selectedColor: item.selectedColor,
+//         colors: item.colors || [],
+//         productSlug: item.productSlug,
+//         costPerItem: item.costPerItem,
+//         buyingPrice: item.buyingPrice,
+//         variantDetails: item.variantDetails || []
+//       }));
+      
+//       let deliveryService = null;
+//       if (order.deliveryService) {
+//         deliveryService = {
+//           courierName: order.deliveryService.courierName || null,
+//           courierSlug: order.deliveryService.courierSlug || null,
+//           trackingNumber: order.deliveryService.trackingNumber || null,
+//           trackingUrl: order.deliveryService.trackingUrl || null,
+//           courierOrderId: order.deliveryService.courierOrderId || null,
+//           deliveryStatus: order.deliveryService.deliveryStatus || null,
+//           deliveryNote: order.deliveryService.deliveryNote || null,
+//           deliveryStatusHistory: order.deliveryService.deliveryStatusHistory || []
+//         };
+//       }
+      
+//       return {
+//         _id: order._id,
+//         id: order._id,
+//         orderNumber: order.orderNumber,
+//         orderStatus: order.orderStatus,
+//         statusLabel: statusLabels[order.orderStatus] || order.orderStatus,
+//         customerName: order.customerInfo?.fullName,
+//         total: order.total,
+//         subtotal: order.subtotal,
+//         shippingCost: order.shippingCost,
+//         discount: order.discount,
+//         createdAt: order.createdAt,
+//         deliveredAt: order.deliveredAt || null,
+//         cancelledAt: order.cancelledAt || null,
+//         trackingNumber: order.trackingNumber || null,
+//         paymentMethod: order.paymentMethod,
+//         paymentStatus: order.paymentStatus,
+//         items: itemsSummary,
+//         timeline: timeline,
+//         statusHistory: order.statusHistory || [],
+//         deliveryService: deliveryService
+//       };
+//     });
+    
+//     res.json({
+//       success: true,
+//       data: {
+//         phone: phone,
+//         totalOrders: formattedOrders.length,
+//         orders: formattedOrders
+//       },
+//       message: `Found ${formattedOrders.length} order(s) for this phone number`
+//     });
+    
+//   } catch (error) {
+//     console.error('Track order error:', error);
+//     res.status(500).json({ success: false, error: error.message });
+//   }
+// };
+
+
 const trackOrderByPhone = async (req, res) => {
   try {
     const { phone } = req.params;
@@ -1728,7 +1906,7 @@ const trackOrderByPhone = async (req, res) => {
       'customerInfo.phone': phone
     })
     .sort({ createdAt: -1 })
-    .select('_id orderNumber orderStatus items subtotal shippingCost discount total customerInfo createdAt deliveredAt cancelledAt statusHistory trackingNumber paymentMethod paymentStatus deliveryService');
+    .select('_id orderNumber orderStatus items subtotal shippingCost discount total customerInfo createdAt deliveredAt cancelledAt statusHistory trackingNumber paymentMethod paymentStatus deliveryService paidAmount returnedAmount refundableAmount deliveryItems');
     
     if (!orders || orders.length === 0) {
       return res.status(404).json({ 
@@ -1741,6 +1919,10 @@ const trackOrderByPhone = async (req, res) => {
       'placed': 'Order Placed',
       'follow_up': 'Follow Up',
       'accepted': 'Accepted',
+      'approved': 'Approved',
+      'hold': 'On Hold',
+      'ready_to_ship': 'Ready to Ship',
+      'courier_assigned': 'Courier Assigned',
       'processing': 'Processing',
       'shipped': 'Shipped',
       'out_for_delivery': 'Out for Delivery',
@@ -1748,7 +1930,10 @@ const trackOrderByPhone = async (req, res) => {
       'cancelled': 'Cancelled',
       'reminder': 'Reminder',
       'refunded': 'Refunded',
-      'failed': 'Failed'
+      'failed': 'Failed',
+      'returned': 'Returned',
+      'partial_delivery': 'Partial Delivery',
+      'rejected': 'Rejected'
     };
     
     const formattedOrders = orders.map(order => {
@@ -1835,6 +2020,25 @@ const trackOrderByPhone = async (req, res) => {
         buyingPrice: item.buyingPrice,
         variantDetails: item.variantDetails || []
       }));
+
+      // ✅ Include delivery items (only returned-eligible fields exposed to public)
+      const deliveryItemsSummary = (order.deliveryItems || []).map(di => ({
+        _id: di._id,
+        productId: di.productId,
+        productName: di.productName,
+        variantId: di.variantId || null,
+        variantName: di.variantName || null,
+        subVariantId: di.subVariantId || null,
+        subVariantName: di.subVariantName || null,
+        selectedColor: di.selectedColor || null,
+        image: di.image || '',
+        unitPrice: di.unitPrice || 0,
+        orderedQuantity: di.orderedQuantity || 0,
+        deliveredQuantity: di.deliveredQuantity || 0,
+        returnedQuantity: di.returnedQuantity || 0,
+        pendingQuantity: di.pendingQuantity || 0,
+        deliveryStatus: di.deliveryStatus || 'pending'
+      }));
       
       let deliveryService = null;
       if (order.deliveryService) {
@@ -1861,6 +2065,9 @@ const trackOrderByPhone = async (req, res) => {
         subtotal: order.subtotal,
         shippingCost: order.shippingCost,
         discount: order.discount,
+        paidAmount: order.paidAmount || 0,
+        returnedAmount: order.returnedAmount || 0,
+        refundableAmount: order.refundableAmount || 0,
         createdAt: order.createdAt,
         deliveredAt: order.deliveredAt || null,
         cancelledAt: order.cancelledAt || null,
@@ -1868,6 +2075,7 @@ const trackOrderByPhone = async (req, res) => {
         paymentMethod: order.paymentMethod,
         paymentStatus: order.paymentStatus,
         items: itemsSummary,
+        deliveryItems: deliveryItemsSummary,
         timeline: timeline,
         statusHistory: order.statusHistory || [],
         deliveryService: deliveryService
@@ -6610,7 +6818,286 @@ const processOrderItem = (item, productDoc, product, productImage, deliveredQtyM
 };
 
 // ============================================================
+// ✅ PLATFORM SALE DETAILS without discount added — matches Profit Margin calculation exactly
+// ============================================================
+// const getPlatformSaleDetails = async (req, res) => {
+//   try {
+//     const {
+//       platform = 'website',
+//       startDate,
+//       endDate,
+//       page = 1,
+//       limit = 20,
+//       search,
+//       orderStatus
+//     } = req.query;
+
+//     const validPlatforms = ['website', 'facebook', 'instagram', 'showroom'];
+
+//     // ============================================================
+//     // Date filter (same shape as profit margin)
+//     // ============================================================
+//     let dateFilter = {};
+//     if (startDate && endDate) {
+//       const start = new Date(startDate);
+//       start.setHours(0, 0, 0, 0);
+//       const end = new Date(endDate);
+//       end.setHours(23, 59, 59, 999);
+//       dateFilter = { createdAt: { $gte: start, $lte: end } };
+//     } else if (startDate) {
+//       const start = new Date(startDate);
+//       start.setHours(0, 0, 0, 0);
+//       dateFilter = { createdAt: { $gte: start } };
+//     } else if (endDate) {
+//       const end = new Date(endDate);
+//       end.setHours(23, 59, 59, 999);
+//       dateFilter = { createdAt: { $lte: end } };
+//     }
+
+//     // ============================================================
+//     // 1) PLATFORM COUNTS (all platforms, all statuses — for tab badges)
+//     // ============================================================
+//     const platformSummaryAgg = await Order.aggregate([
+//       { $match: dateFilter },
+//       {
+//         $group: {
+//           _id: '$orderPlatform',
+//           totalOrders: { $sum: 1 },
+//           delivered: {
+//             $sum: { $cond: [{ $eq: ['$orderStatus', 'delivered'] }, 1, 0] }
+//           },
+//           partialDelivered: {
+//             $sum: { $cond: [{ $eq: ['$orderStatus', 'partial_delivery'] }, 1, 0] }
+//           },
+//           cancelled: {
+//             $sum: { $cond: [{ $eq: ['$orderStatus', 'cancelled'] }, 1, 0] }
+//           },
+//           returned: {
+//             $sum: { $cond: [{ $eq: ['$orderStatus', 'returned'] }, 1, 0] }
+//           },
+//           rejected: {
+//             $sum: { $cond: [{ $eq: ['$orderStatus', 'rejected'] }, 1, 0] }
+//           },
+//           totalRevenue: { $sum: '$total' },
+//           totalPaid: { $sum: '$paidAmount' }
+//         }
+//       }
+//     ]);
+
+//     const platformSummary = {};
+//     validPlatforms.forEach((p) => {
+//       platformSummary[p] = {
+//         platform: p,
+//         totalOrders: 0,
+//         delivered: 0,
+//         partialDelivered: 0,
+//         cancelled: 0,
+//         returned: 0,
+//         rejected: 0,
+//         totalRevenue: 0,
+//         totalPaid: 0,
+//         totalRevenueDelivered: 0,
+//         totalCostDelivered: 0,
+//         totalProfit: 0,
+//         profitMargin: '0.00',
+//         itemsCount: 0
+//       };
+//     });
+
+//     platformSummaryAgg.forEach((row) => {
+//       const p = row._id || 'website';
+//       if (!platformSummary[p]) return;
+//       platformSummary[p].totalOrders = row.totalOrders;
+//       platformSummary[p].delivered = row.delivered;
+//       platformSummary[p].partialDelivered = row.partialDelivered;
+//       platformSummary[p].cancelled = row.cancelled;
+//       platformSummary[p].returned = row.returned;
+//       platformSummary[p].rejected = row.rejected;
+//       platformSummary[p].totalRevenue = Math.round(row.totalRevenue * 100) / 100;
+//       platformSummary[p].totalPaid = Math.round(row.totalPaid * 100) / 100;
+//     });
+
+//     // ============================================================
+//     // 2) PROFIT PER PLATFORM
+//     //     ★ Uses EXACT same query + helpers as profitMarginController
+//     // ============================================================
+//     const profitQuery = {
+//       orderStatus: { $in: ['delivered', 'partial_delivery'] },
+//       paymentStatus: { $in: ['paid', 'partial'] },
+//       ...dateFilter
+//     };
+
+//     const profitOrders = await Order.find(profitQuery)
+//       .populate('items.productId', 'costPerItem buyingPrice productName variantTypes hasVariants');
+
+//     profitOrders.forEach((order) => {
+//       const p = order.orderPlatform || 'website';
+//       if (!platformSummary[p]) return;
+
+//       // ✅ Same per-order delivered-qty map
+//       const deliveredQtyMap = buildDeliveredQuantityMap(order);
+
+//       // ✅ Same per-item processing; use a throw-away product container
+//       //    so hasVariants / hasSubVariants don't matter here
+//       const dummyProduct = { hasVariants: false, hasSubVariants: false, variantBreakdownMap: {} };
+
+//       order.items.forEach((item) => {
+//         const productDoc = item.productId && typeof item.productId === 'object'
+//           ? item.productId
+//           : null;
+//         const productImage = item.image || '';
+
+//         const { itemRevenue, itemCost, itemQuantity } = processOrderItem(
+//           item,
+//           productDoc,
+//           dummyProduct,
+//           productImage,
+//           deliveredQtyMap
+//         );
+
+//         platformSummary[p].totalRevenueDelivered += itemRevenue;
+//         platformSummary[p].totalCostDelivered += itemCost;
+//         platformSummary[p].itemsCount += itemQuantity;
+//       });
+//     });
+
+//     // Round & compute margins
+//     Object.keys(platformSummary).forEach((p) => {
+//       const s = platformSummary[p];
+//       s.totalRevenueDelivered = Math.round(s.totalRevenueDelivered * 100) / 100;
+//       s.totalCostDelivered = Math.round(s.totalCostDelivered * 100) / 100;
+//       s.totalProfit =
+//         Math.round((s.totalRevenueDelivered - s.totalCostDelivered) * 100) / 100;
+//       s.profitMargin =
+//         s.totalRevenueDelivered > 0
+//           ? ((s.totalProfit / s.totalRevenueDelivered) * 100).toFixed(2)
+//           : '0.00';
+//     });
+
+//     // Combined
+//     let combinedRevenue = 0;
+//     let combinedCost = 0;
+//     Object.values(platformSummary).forEach((p) => {
+//       combinedRevenue += p.totalRevenueDelivered;
+//       combinedCost += p.totalCostDelivered;
+//     });
+//     const combinedProfit = Math.round((combinedRevenue - combinedCost) * 100) / 100;
+//     const combinedMargin =
+//       combinedRevenue > 0
+//         ? ((combinedProfit / combinedRevenue) * 100).toFixed(2)
+//         : '0.00';
+
+//     // ============================================================
+//     // 3) ORDERS for selected platform (paginated)
+//     // ============================================================
+//     const ordersQuery = {
+//       ...(dateFilter.createdAt ? { createdAt: dateFilter.createdAt } : {}),
+//       orderPlatform: platform
+//     };
+
+//     if (orderStatus && orderStatus !== 'all') {
+//       ordersQuery.orderStatus = orderStatus;
+//     }
+
+//     if (search && search.trim()) {
+//       const regex = new RegExp(search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+//       ordersQuery.$or = [
+//         { orderNumber: regex },
+//         { 'customerInfo.fullName': regex },
+//         { 'customerInfo.phone': regex },
+//         { 'customerInfo.email': regex }
+//       ];
+//     }
+
+//     const skip = (parseInt(page) - 1) * parseInt(limit);
+
+//     const [orders, totalOrdersCount] = await Promise.all([
+//       Order.find(ordersQuery)
+//         .sort({ createdAt: -1 })
+//         .skip(skip)
+//         .limit(parseInt(limit))
+//         .populate('items.productId', 'costPerItem buyingPrice productName variantTypes hasVariants')
+//         .populate('statusHistory.updatedBy', 'email name contactPerson')
+//         .select(
+//           'orderNumber orderStatus orderPlatform paymentStatus paymentMethod ' +
+//           'subtotal shippingCost discount total paidAmount returnedAmount refundableAmount ' +
+//           'couponCode deliveryNote ' +
+//           'customerInfo createdAt updatedAt deliveredAt cancelledAt returnedAt ' +
+//           'items deliveryItems deliveryService trackingNumber statusHistory deviceInfo'
+//         ),
+//       Order.countDocuments(ordersQuery)
+//     ]);
+
+//     // ✅ Per-order profit attached to the response (for the modal)
+//     const ordersWithProfit = orders.map((order) => {
+//       const o = order.toObject();
+//       const deliveredQtyMap = buildDeliveredQuantityMap(order);
+//       const dummyProduct = { hasVariants: false, hasSubVariants: false, variantBreakdownMap: {} };
+
+//       let orderRevenue = 0;
+//       let orderCost = 0;
+//       let orderQuantity = 0;
+
+//       order.items.forEach((item) => {
+//         const productDoc = item.productId && typeof item.productId === 'object'
+//           ? item.productId
+//           : null;
+//         const productImage = item.image || '';
+
+//         const { itemRevenue, itemCost, itemQuantity } = processOrderItem(
+//           item,
+//           productDoc,
+//           dummyProduct,
+//           productImage,
+//           deliveredQtyMap
+//         );
+
+//         orderRevenue += itemRevenue;
+//         orderCost += itemCost;
+//         orderQuantity += itemQuantity;
+//       });
+
+//       o.orderRevenue = Math.round(orderRevenue * 100) / 100;
+//       o.orderCost = Math.round(orderCost * 100) / 100;
+//       o.orderProfit = Math.round((orderRevenue - orderCost) * 100) / 100;
+//       o.orderProfitMargin =
+//         orderRevenue > 0
+//           ? Math.round(((orderRevenue - orderCost) / orderRevenue) * 100 * 100) / 100
+//           : 0;
+//       o.orderProfitQuantity = orderQuantity;
+
+//       return o;
+//     });
+
+//     res.json({
+//       success: true,
+//       data: {
+//         selectedPlatform: platform,
+//         platforms: platformSummary,
+//         combined: {
+//           totalRevenueDelivered: Math.round(combinedRevenue * 100) / 100,
+//           totalCostDelivered: Math.round(combinedCost * 100) / 100,
+//           totalProfit: combinedProfit,
+//           profitMargin: combinedMargin
+//         },
+//         orders: ordersWithProfit,
+//         pagination: {
+//           total: totalOrdersCount,
+//           page: parseInt(page),
+//           pages: Math.ceil(totalOrdersCount / parseInt(limit)),
+//           limit: parseInt(limit)
+//         }
+//       }
+//     });
+//   } catch (error) {
+//     console.error('Get platform sale details error:', error);
+//     res.status(500).json({ success: false, error: error.message });
+//   }
+// };
+
+// ============================================================
 // ✅ PLATFORM SALE DETAILS — matches Profit Margin calculation exactly
+//    + Now includes Net Profit After Discount per platform and per order
 // ============================================================
 const getPlatformSaleDetails = async (req, res) => {
   try {
@@ -6692,7 +7179,12 @@ const getPlatformSaleDetails = async (req, res) => {
         totalCostDelivered: 0,
         totalProfit: 0,
         profitMargin: '0.00',
-        itemsCount: 0
+        itemsCount: 0,
+
+        // ✅ NEW: discount + net profit fields
+        totalDiscount: 0,
+        netProfitAfterDiscount: 0,
+        netProfitMargin: '0.00'
       };
     });
 
@@ -6712,6 +7204,7 @@ const getPlatformSaleDetails = async (req, res) => {
     // ============================================================
     // 2) PROFIT PER PLATFORM
     //     ★ Uses EXACT same query + helpers as profitMarginController
+    //     ★ Now also accumulates discount + net profit
     // ============================================================
     const profitQuery = {
       orderStatus: { $in: ['delivered', 'partial_delivery'] },
@@ -6751,32 +7244,62 @@ const getPlatformSaleDetails = async (req, res) => {
         platformSummary[p].totalCostDelivered += itemCost;
         platformSummary[p].itemsCount += itemQuantity;
       });
+
+      // ✅ NEW: accumulate discount for this platform
+      const orderDiscount = Number(order.discount) || 0;
+      platformSummary[p].totalDiscount += orderDiscount;
     });
 
-    // Round & compute margins
+    // Round & compute margins — including net profit after discount
     Object.keys(platformSummary).forEach((p) => {
       const s = platformSummary[p];
+
       s.totalRevenueDelivered = Math.round(s.totalRevenueDelivered * 100) / 100;
       s.totalCostDelivered = Math.round(s.totalCostDelivered * 100) / 100;
       s.totalProfit =
         Math.round((s.totalRevenueDelivered - s.totalCostDelivered) * 100) / 100;
+
+      // ✅ NEW: net profit after discount
+      s.totalDiscount = Math.round((s.totalDiscount || 0) * 100) / 100;
+      s.netProfitAfterDiscount =
+        Math.round((s.totalProfit - s.totalDiscount) * 100) / 100;
+      s.netProfitMargin =
+        s.totalRevenueDelivered > 0
+          ? ((s.netProfitAfterDiscount / s.totalRevenueDelivered) * 100).toFixed(2)
+          : '0.00';
+
+      // Existing profit margin
       s.profitMargin =
         s.totalRevenueDelivered > 0
           ? ((s.totalProfit / s.totalRevenueDelivered) * 100).toFixed(2)
           : '0.00';
     });
 
-    // Combined
+    // ============================================================
+    // Combined totals across all platforms
+    // ============================================================
     let combinedRevenue = 0;
     let combinedCost = 0;
+    let combinedDiscount = 0;
+
     Object.values(platformSummary).forEach((p) => {
       combinedRevenue += p.totalRevenueDelivered;
       combinedCost += p.totalCostDelivered;
+      combinedDiscount += p.totalDiscount || 0;
     });
+
     const combinedProfit = Math.round((combinedRevenue - combinedCost) * 100) / 100;
     const combinedMargin =
       combinedRevenue > 0
         ? ((combinedProfit / combinedRevenue) * 100).toFixed(2)
+        : '0.00';
+
+    // ✅ NEW
+    const combinedNetProfit =
+      Math.round((combinedProfit - combinedDiscount) * 100) / 100;
+    const combinedNetMargin =
+      combinedRevenue > 0
+        ? ((combinedNetProfit / combinedRevenue) * 100).toFixed(2)
         : '0.00';
 
     // ============================================================
@@ -6820,7 +7343,10 @@ const getPlatformSaleDetails = async (req, res) => {
       Order.countDocuments(ordersQuery)
     ]);
 
+    // ============================================================
     // ✅ Per-order profit attached to the response (for the modal)
+    //    + now includes discount + net profit per order
+    // ============================================================
     const ordersWithProfit = orders.map((order) => {
       const o = order.toObject();
       const deliveredQtyMap = buildDeliveredQuantityMap(order);
@@ -6849,18 +7375,33 @@ const getPlatformSaleDetails = async (req, res) => {
         orderQuantity += itemQuantity;
       });
 
+      const orderDiscount = Number(order.discount) || 0;
+      const orderProfit = orderRevenue - orderCost;
+      const orderNetProfit = orderProfit - orderDiscount;
+
       o.orderRevenue = Math.round(orderRevenue * 100) / 100;
       o.orderCost = Math.round(orderCost * 100) / 100;
-      o.orderProfit = Math.round((orderRevenue - orderCost) * 100) / 100;
+      o.orderProfit = Math.round(orderProfit * 100) / 100;
       o.orderProfitMargin =
         orderRevenue > 0
-          ? Math.round(((orderRevenue - orderCost) / orderRevenue) * 100 * 100) / 100
+          ? Math.round((orderProfit / orderRevenue) * 100 * 100) / 100
           : 0;
       o.orderProfitQuantity = orderQuantity;
+
+      // ✅ NEW: per-order discount + net fields
+      o.orderDiscount = Math.round(orderDiscount * 100) / 100;
+      o.orderNetProfit = Math.round(orderNetProfit * 100) / 100;
+      o.orderNetProfitMargin =
+        orderRevenue > 0
+          ? Math.round((orderNetProfit / orderRevenue) * 100 * 100) / 100
+          : 0;
 
       return o;
     });
 
+    // ============================================================
+    // Final response
+    // ============================================================
     res.json({
       success: true,
       data: {
@@ -6870,7 +7411,12 @@ const getPlatformSaleDetails = async (req, res) => {
           totalRevenueDelivered: Math.round(combinedRevenue * 100) / 100,
           totalCostDelivered: Math.round(combinedCost * 100) / 100,
           totalProfit: combinedProfit,
-          profitMargin: combinedMargin
+          profitMargin: combinedMargin,
+
+          // ✅ NEW: combined discount + net profit
+          totalDiscount: Math.round(combinedDiscount * 100) / 100,
+          netProfitAfterDiscount: combinedNetProfit,
+          netProfitMargin: combinedNetMargin
         },
         orders: ordersWithProfit,
         pagination: {
@@ -6937,6 +7483,153 @@ const createShowroomOrder = async (req, res) => {
   }
 };
 
+// ============================================================
+// ✅ GET PLATFORM SALES TREND (Daily aggregated, no pagination)
+// @route   GET /api/orders/admin/platform-sales-trend
+// @access  Private (Admin/Super Admin)
+// Returns daily totals per platform for chart rendering
+// ============================================================
+const getPlatformSalesTrend = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+
+    // ============================================================
+    // Date filter
+    // ============================================================
+    let dateFilter = {};
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      dateFilter = { createdAt: { $gte: start, $lte: end } };
+    } else if (startDate) {
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      dateFilter = { createdAt: { $gte: start } };
+    } else if (endDate) {
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      dateFilter = { createdAt: { $lte: end } };
+    }
+
+    // ============================================================
+    // Aggregate: group by date + platform, sum totals
+    // ============================================================
+    const pipeline = [
+      { $match: dateFilter },
+      {
+        $group: {
+          _id: {
+            date: {
+              $dateToString: { format: '%Y-%m-%d', date: '$createdAt' },
+            },
+            platform: { $ifNull: ['$orderPlatform', 'website'] },
+          },
+          totalSales: { $sum: '$total' },
+          totalPaid: { $sum: '$paidAmount' },
+          orderCount: { $sum: 1 },
+        },
+      },
+      { $sort: { '_id.date': 1 } },
+    ];
+
+    const aggResults = await Order.aggregate(pipeline);
+
+    // ============================================================
+    // Pivot: one row per date with all platform columns
+    // ============================================================
+    const dateMap = new Map();
+
+    aggResults.forEach((row) => {
+      const date = row._id.date;
+      const platform = row._id.platform || 'website';
+
+      if (!dateMap.has(date)) {
+        dateMap.set(date, {
+          date,
+          dateLabel: new Date(date).toLocaleDateString('en-BD', {
+            day: '2-digit',
+            month: 'short',
+          }),
+          total: 0,
+          website: 0,
+          facebook: 0,
+          instagram: 0,
+          showroom: 0,
+          orders: 0,
+        });
+      }
+
+      const entry = dateMap.get(date);
+      entry.total += row.totalSales || 0;
+      entry.orders += row.orderCount || 0;
+
+      if (entry[platform] !== undefined) {
+        entry[platform] += row.totalSales || 0;
+      } else {
+        // Unknown platform → count toward website bucket
+        entry.website += row.totalSales || 0;
+      }
+    });
+
+    // ============================================================
+    // Fill in missing dates in the range (so chart has continuous X-axis)
+    // ============================================================
+    const filledData = [];
+
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+
+      const cursor = new Date(start);
+      let safety = 0;
+
+      while (cursor <= end && safety < 400) {
+        const key = cursor.toISOString().split('T')[0];
+
+        if (dateMap.has(key)) {
+          filledData.push(dateMap.get(key));
+        } else {
+          filledData.push({
+            date: key,
+            dateLabel: cursor.toLocaleDateString('en-BD', {
+              day: '2-digit',
+              month: 'short',
+            }),
+            total: 0,
+            website: 0,
+            facebook: 0,
+            instagram: 0,
+            showroom: 0,
+            orders: 0,
+          });
+        }
+
+        cursor.setDate(cursor.getDate() + 1);
+        safety++;
+      }
+    } else {
+      // No date range → just return sorted aggregated data
+      filledData.push(
+        ...Array.from(dateMap.values()).sort((a, b) =>
+          a.date.localeCompare(b.date)
+        )
+      );
+    }
+
+    res.json({
+      success: true,
+      data: filledData,
+    });
+  } catch (error) {
+    console.error('Get platform sales trend error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
 // ========== EXPORTS ==========
 module.exports = {
   createOrder,
@@ -6975,5 +7668,6 @@ module.exports = {
    searchDuplicateCustomers,
   getDuplicateCustomerOrderDetails,
    getPlatformSaleDetails,
-   createShowroomOrder
+   createShowroomOrder,
+   getPlatformSalesTrend
 };

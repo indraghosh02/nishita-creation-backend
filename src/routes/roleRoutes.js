@@ -1,23 +1,4 @@
-// const express = require('express');
-// const router = express.Router();
-// const {
-//   getAllUsers,
-//   updateUserRole,
-//   getRoleStats,
-//   getDashboardAccess,
-//   getAvailablePermissions
-// } = require('../controllers/roleController');
-// const { protect, authorize } = require('../middleware/authMiddleware');
 
-// // All role routes require authentication
-// // Super Admin only routes
-// router.get('/users', protect, authorize('super_admin'), getAllUsers);
-// router.put('/update/:userId', protect, authorize('super_admin'), updateUserRole);
-// router.get('/stats', protect, authorize('super_admin'), getRoleStats);
-// router.get('/permissions', protect, authorize('super_admin'), getAvailablePermissions);
-
-// // Any authenticated user can get their own dashboard access
-// router.get('/dashboard-access', protect, getDashboardAccess);
 
 // module.exports = router;
 // backend/src/routes/roleRoutes.js
@@ -94,19 +75,47 @@ router.put('/update/:userId', protect, authorize('super_admin'), async (req, res
 
     // ✅ Validate dashboardAccess keys
     if (dashboardAccess) {
-      const validPageKeys = [
-        'dashboard', 'profit_margin',
-        'all_orders', 'incomplete_orders', 'order_restrictions', 'courier_settings', 'courier_score', 'create_order',
-        'all_products', 'create_products', 'product_cost', 'create_category', 'manage_brands', 'manage_tags',
-        'manage_navbar', 'create_banner', 'manage_banner', 'manage_homepage', 'manage_footer','manage_why_choose_us', 
-        'terms_management', 'privacy_management', 'contact_management', 'about_management',
-          'deal_management', 'trust_results_management',
-        'pixel_settings', 'custom_code',
-        'manage_reviews',
-        'create_users', 'manage_users', 'manage_customers', 'role_management',
-        'delivery_settings', 'media_library', 'email_settings', 'settings'
-      ];
+      // const validPageKeys = [
+      //   'dashboard', 'profit_margin',
+      //   'all_orders', 'incomplete_orders', 'order_restrictions', 'courier_settings', 'courier_score', 'create_order',
+      //   'all_products', 'create_products', 'product_cost', 'create_category', 'manage_brands', 'manage_tags',
+      //   'manage_navbar', 'create_banner', 'manage_banner', 'manage_homepage', 'manage_footer','manage_why_choose_us', 
+      //   'terms_management', 'privacy_management', 'contact_management', 'about_management',
+      //     'deal_management', 'trust_results_management',
+      //   'pixel_settings', 'custom_code',
+      //   'manage_reviews',
+      //   'create_users', 'manage_users', 'manage_customers', 'role_management',
+      //   'delivery_settings', 'media_library', 'email_settings', 'settings'
+      // ];
       
+      const validPageKeys = [
+  // Dashboard
+  'dashboard', 'profit_margin',
+  // Orders
+  'all_orders', 'incomplete_orders', 'order_restrictions', 'courier_settings', 'courier_score', 'create_order',
+  // Products
+  'all_products', 'create_products', 'product_cost', 'create_category', 'manage_brands', 'manage_tags',
+  // ⭐ NEW — Barcodes
+  'all_barcodes', 'barcode_scanner',
+  // Website Layout
+  'manage_navbar', 'create_banner', 'manage_banner', 'manage_homepage', 'manage_footer', 'manage_why_choose_us',
+  'terms_management', 'privacy_management', 'contact_management', 'about_management',
+  // ⭐ NEW — Website additions
+  'deal_management', 'trust_results_management', 'video_management', 'achievement_management',
+  // Pixel
+  'pixel_settings', 'custom_code',
+  // Reviews
+  'manage_reviews',
+  // ⭐ NEW — Courses & Coupons
+  'manage_courses', 'coupons',
+  // User Management
+  'create_users', 'manage_users', 'manage_customers', 'role_management',
+  // ⭐ NEW — Inventory group
+  'inventory',
+  'returned_items', 'stock_alert', 'restock', 'duplicate_customer', 'platform_sales', 'showroom_pos',
+  // Settings
+  'delivery_settings', 'media_library', 'email_settings', 'settings'
+];
       // Remove any invalid keys
       const validAccess = dashboardAccess.filter(key => validPageKeys.includes(key));
       if (validAccess.length !== dashboardAccess.length) {
@@ -209,18 +218,34 @@ router.get('/dashboard-access', protect, async (req, res) => {
     const user = await User.findById(req.user.id);
     
     // ✅ Updated to match all page keys from frontend
+    // const allSections = [
+    //   'dashboard', 'profit_margin',
+    //   'all_orders', 'incomplete_orders', 'order_restrictions', 'courier_settings', 'courier_score', 'create_order', 
+    //   'all_products', 'create_products', 'product_cost', 'create_category', 'manage_brands', 'manage_tags',
+    //   'manage_navbar', 'create_banner', 'manage_banner', 'manage_homepage', 'manage_footer', 'manage_why_choose_us', 
+    //   'terms_management', 'privacy_management', 'contact_management', 'about_management',
+    //    'deal_management', 'trust_results_management',
+    //   'pixel_settings', 'custom_code',
+    //   'manage_reviews',
+    //   'create_users', 'manage_users', 'manage_customers', 'role_management',
+    //   'delivery_settings', 'media_library', 'email_settings', 'settings'
+    // ];
     const allSections = [
-      'dashboard', 'profit_margin',
-      'all_orders', 'incomplete_orders', 'order_restrictions', 'courier_settings', 'courier_score', 'create_order', 
-      'all_products', 'create_products', 'product_cost', 'create_category', 'manage_brands', 'manage_tags',
-      'manage_navbar', 'create_banner', 'manage_banner', 'manage_homepage', 'manage_footer', 'manage_why_choose_us', 
-      'terms_management', 'privacy_management', 'contact_management', 'about_management',
-       'deal_management', 'trust_results_management',
-      'pixel_settings', 'custom_code',
-      'manage_reviews',
-      'create_users', 'manage_users', 'manage_customers', 'role_management',
-      'delivery_settings', 'media_library', 'email_settings', 'settings'
-    ];
+  'dashboard', 'profit_margin',
+  'all_orders', 'incomplete_orders', 'order_restrictions', 'courier_settings', 'courier_score', 'create_order',
+  'all_products', 'create_products', 'product_cost', 'create_category', 'manage_brands', 'manage_tags',
+  'all_barcodes', 'barcode_scanner',                      // ⭐ NEW
+  'manage_navbar', 'create_banner', 'manage_banner', 'manage_homepage', 'manage_footer', 'manage_why_choose_us',
+  'terms_management', 'privacy_management', 'contact_management', 'about_management',
+  'deal_management', 'trust_results_management', 'video_management', 'achievement_management',  // ⭐ NEW
+  'pixel_settings', 'custom_code',
+  'manage_reviews',
+  'manage_courses', 'coupons',                            // ⭐ NEW
+  'create_users', 'manage_users', 'manage_customers', 'role_management',
+  'inventory',                                            // ⭐ NEW
+  'returned_items', 'stock_alert', 'restock', 'duplicate_customer', 'platform_sales', 'showroom_pos',  // ⭐ NEW
+  'delivery_settings', 'media_library', 'email_settings', 'settings'
+];
 
     if (user.role === 'super_admin') {
       return res.json({
@@ -238,38 +263,73 @@ router.get('/dashboard-access', protect, async (req, res) => {
     let access = user.dashboardAccess || [];
     
     if (access.length === 0) {
-      const roleDefaults = {
-        admin: [
-          'dashboard', 'profit_margin',
-          'all_orders', 'incomplete_orders', 'order_restrictions', 'courier_settings', 'courier_score',
-          'all_products', 'create_products', 'product_cost', 'create_category', 'manage_brands', 'manage_tags',
-          'manage_navbar', 'create_banner', 'manage_banner', 'manage_homepage', 'manage_footer',
-          'deal_management',              // ✅ ADD
-    'trust_results_management', 
-          'terms_management', 'privacy_management', 'contact_management', 'about_management',
-          'pixel_settings', 'custom_code',
-          'manage_reviews',
-          'create_users', 'manage_users', 'manage_customers',
-          'delivery_settings', 'media_library', 'email_settings', 'settings'
-        ],
-        moderator: [
-          'dashboard',
-          'all_products', 'create_products', 'product_cost', 'create_category', 'manage_brands', 'manage_tags',
-          'manage_navbar', 'create_banner', 'manage_banner', 'manage_homepage', 'manage_footer',
-          'terms_management', 'privacy_management', 'contact_management', 'about_management', 
-          'deal_management',              // ✅ ADD (optional)
-    'trust_results_management',  
-          'pixel_settings', 'custom_code',
-          'manage_reviews',
-          'media_library'
-        ],
-        call_center_agent: [
-          'dashboard',
-          'all_orders', 'incomplete_orders', 'courier_score',
-          'manage_customers'
-        ],
-        customer: []
-      };
+    //   const roleDefaults = {
+    //     admin: [
+    //       'dashboard', 'profit_margin',
+    //       'all_orders', 'incomplete_orders', 'order_restrictions', 'courier_settings', 'courier_score',
+    //       'all_products', 'create_products', 'product_cost', 'create_category', 'manage_brands', 'manage_tags',
+    //       'manage_navbar', 'create_banner', 'manage_banner', 'manage_homepage', 'manage_footer',
+    //       'deal_management',              // ✅ ADD
+    // 'trust_results_management', 
+    //       'terms_management', 'privacy_management', 'contact_management', 'about_management',
+    //       'pixel_settings', 'custom_code',
+    //       'manage_reviews',
+    //       'create_users', 'manage_users', 'manage_customers',
+    //       'delivery_settings', 'media_library', 'email_settings', 'settings'
+    //     ],
+    //     moderator: [
+    //       'dashboard',
+    //       'all_products', 'create_products', 'product_cost', 'create_category', 'manage_brands', 'manage_tags',
+    //       'manage_navbar', 'create_banner', 'manage_banner', 'manage_homepage', 'manage_footer',
+    //       'terms_management', 'privacy_management', 'contact_management', 'about_management', 
+    //       'deal_management',              // ✅ ADD (optional)
+    // 'trust_results_management',  
+    //       'pixel_settings', 'custom_code',
+    //       'manage_reviews',
+    //       'media_library'
+    //     ],
+    //     call_center_agent: [
+    //       'dashboard',
+    //       'all_orders', 'incomplete_orders', 'courier_score',
+    //       'manage_customers'
+    //     ],
+    //     customer: []
+    //   };
+    const roleDefaults = {
+  admin: [
+    'dashboard', 'profit_margin',
+    'all_orders', 'incomplete_orders', 'order_restrictions', 'courier_settings', 'courier_score',
+    'all_products', 'create_products', 'product_cost', 'create_category', 'manage_brands', 'manage_tags',
+    'all_barcodes', 'barcode_scanner',                     // ⭐ NEW
+    'manage_navbar', 'create_banner', 'manage_banner', 'manage_homepage', 'manage_footer',
+    'deal_management', 'trust_results_management', 'video_management', 'achievement_management',  // ⭐ NEW
+    'terms_management', 'privacy_management', 'contact_management', 'about_management',
+    'pixel_settings', 'custom_code',
+    'manage_reviews',
+    'manage_courses', 'coupons',                           // ⭐ NEW
+    'create_users', 'manage_users', 'manage_customers',
+    'inventory',                                           // ⭐ NEW
+    'returned_items', 'stock_alert', 'restock', 'duplicate_customer', 'platform_sales', 'showroom_pos',  // ⭐ NEW
+    'delivery_settings', 'media_library', 'email_settings', 'settings'
+  ],
+  moderator: [
+    'dashboard',
+    'all_products', 'create_products', 'product_cost', 'create_category', 'manage_brands', 'manage_tags',
+    'all_barcodes',                                        // ⭐ NEW
+    'manage_navbar', 'create_banner', 'manage_banner', 'manage_homepage', 'manage_footer',
+    'deal_management', 'trust_results_management', 'video_management', 'achievement_management',  // ⭐ NEW
+    'terms_management', 'privacy_management', 'contact_management', 'about_management',
+    'pixel_settings', 'custom_code',
+    'manage_reviews',
+    'media_library'
+  ],
+  call_center_agent: [
+    'dashboard',
+    'all_orders', 'incomplete_orders', 'courier_score',
+    'manage_customers'
+  ],
+  customer: []
+};
       access = roleDefaults[user.role] || [];
     }
 
@@ -318,6 +378,62 @@ router.get('/permissions', protect, authorize('super_admin'), async (req, res) =
 });
 
 // Get all page keys for frontend
+// router.get('/page-keys', protect, authorize('super_admin'), async (req, res) => {
+//   const pageKeys = [
+//     // Dashboard
+//     { key: 'dashboard', label: 'Dashboard', category: 'Dashboard' },
+//     { key: 'profit_margin', label: 'Profit Margin', category: 'Dashboard' },
+//     // Orders
+//     { key: 'all_orders', label: 'All Orders', category: 'Orders' },
+//     { key: 'incomplete_orders', label: 'Incomplete Orders', category: 'Orders' },
+//     { key: 'order_restrictions', label: 'Order Restrictions', category: 'Orders' },
+//     { key: 'courier_settings', label: 'Courier Settings', category: 'Orders' },
+//     { key: 'courier_score', label: 'Courier Score', category: 'Orders' },
+//     { key: 'create_order', label: 'Create Order', category: 'Orders' },
+//     // Products
+//     { key: 'all_products', label: 'All Products', category: 'Products' },
+//     { key: 'create_products', label: 'Create Products', category: 'Products' },
+//     { key: 'product_cost', label: 'Cost Settings', category: 'Products' },
+//     { key: 'create_category', label: 'Create Category', category: 'Products' },
+//     { key: 'manage_brands', label: 'Manage Brands', category: 'Products' },
+//     { key: 'manage_tags', label: 'Manage Tags', category: 'Products' },
+//     // Website Layout
+//     { key: 'manage_navbar', label: 'Manage Navbar', category: 'Website Layout' },
+//     { key: 'create_banner', label: 'Create Banner', category: 'Website Layout' },
+//     { key: 'manage_banner', label: 'Manage Banner', category: 'Website Layout' },
+//     { key: 'manage_homepage', label: 'Manage Homepage', category: 'Website Layout' },
+//     { key: 'manage_footer', label: 'Manage Footer', category: 'Website Layout' },
+//     { key: 'deal_management', label: 'Deal Management', category: 'Website Layout' },
+// { key: 'trust_results_management', label: 'Trust Results', category: 'Website Layout' },
+//     { key: 'terms_management', label: 'Terms Management', category: 'Website Layout' },
+//     { key: 'privacy_management', label: 'Privacy Management', category: 'Website Layout' },
+//     { key: 'contact_management', label: 'Contact Management', category: 'Website Layout' },
+//     { key: 'about_management', label: 'About Management', category: 'Website Layout' },
+//      { key: 'manage_why_choose_us', label: 'Manage Why Choose Us', category: 'Website Layout' }, 
+//     // Pixel
+//     { key: 'pixel_settings', label: 'Pixel Settings', category: 'Pixel' },
+//     { key: 'custom_code', label: 'Custom Code', category: 'Pixel' },
+//     // Reviews
+//     { key: 'manage_reviews', label: 'Manage Reviews', category: 'Reviews' },
+//     // User Management
+//     { key: 'create_users', label: 'Create Users', category: 'User Management' },
+//     { key: 'manage_users', label: 'Manage Users', category: 'User Management' },
+//     { key: 'manage_customers', label: 'Create & Manage Customers', category: 'User Management' },
+//     { key: 'role_management', label: 'Role Management', category: 'User Management' },
+//     // Settings
+//     { key: 'delivery_settings', label: 'Delivery Settings', category: 'Settings' },
+//     { key: 'media_library', label: 'Media Library', category: 'Settings' },
+//     { key: 'email_settings', label: 'Email Settings', category: 'Settings' },
+//     { key: 'settings', label: 'Settings', category: 'Settings' }
+//   ];
+
+//   res.json({
+//     success: true,
+//     data: pageKeys
+//   });
+// });
+
+
 router.get('/page-keys', protect, authorize('super_admin'), async (req, res) => {
   const pageKeys = [
     // Dashboard
@@ -337,29 +453,45 @@ router.get('/page-keys', protect, authorize('super_admin'), async (req, res) => 
     { key: 'create_category', label: 'Create Category', category: 'Products' },
     { key: 'manage_brands', label: 'Manage Brands', category: 'Products' },
     { key: 'manage_tags', label: 'Manage Tags', category: 'Products' },
+    // ⭐ NEW — Barcodes (put under Products)
+    { key: 'all_barcodes', label: 'All Barcodes', category: 'Products' },
+    { key: 'barcode_scanner', label: 'Barcode Scanner', category: 'Products' },
     // Website Layout
     { key: 'manage_navbar', label: 'Manage Navbar', category: 'Website Layout' },
     { key: 'create_banner', label: 'Create Banner', category: 'Website Layout' },
     { key: 'manage_banner', label: 'Manage Banner', category: 'Website Layout' },
     { key: 'manage_homepage', label: 'Manage Homepage', category: 'Website Layout' },
     { key: 'manage_footer', label: 'Manage Footer', category: 'Website Layout' },
+    { key: 'manage_why_choose_us', label: 'Manage Why Choose Us', category: 'Website Layout' },
     { key: 'deal_management', label: 'Deal Management', category: 'Website Layout' },
-{ key: 'trust_results_management', label: 'Trust Results', category: 'Website Layout' },
+    { key: 'trust_results_management', label: 'Trust Results', category: 'Website Layout' },
+    // ⭐ NEW — Website additions
+    { key: 'video_management', label: 'Video Management', category: 'Website Layout' },
+    { key: 'achievement_management', label: 'Achievement Management', category: 'Website Layout' },
     { key: 'terms_management', label: 'Terms Management', category: 'Website Layout' },
     { key: 'privacy_management', label: 'Privacy Management', category: 'Website Layout' },
     { key: 'contact_management', label: 'Contact Management', category: 'Website Layout' },
     { key: 'about_management', label: 'About Management', category: 'Website Layout' },
-     { key: 'manage_why_choose_us', label: 'Manage Why Choose Us', category: 'Website Layout' }, 
     // Pixel
     { key: 'pixel_settings', label: 'Pixel Settings', category: 'Pixel' },
     { key: 'custom_code', label: 'Custom Code', category: 'Pixel' },
     // Reviews
     { key: 'manage_reviews', label: 'Manage Reviews', category: 'Reviews' },
+    // ⭐ NEW — Courses & Coupons
+    { key: 'manage_courses', label: 'Manage Courses', category: 'Content' },
+    { key: 'coupons', label: 'Manage Coupons', category: 'Content' },
     // User Management
     { key: 'create_users', label: 'Create Users', category: 'User Management' },
     { key: 'manage_users', label: 'Manage Users', category: 'User Management' },
     { key: 'manage_customers', label: 'Create & Manage Customers', category: 'User Management' },
     { key: 'role_management', label: 'Role Management', category: 'User Management' },
+    // ⭐ NEW — Inventory
+    { key: 'returned_items', label: 'Returned Items', category: 'Inventory' },
+    { key: 'stock_alert', label: 'Stock Alert', category: 'Inventory' },
+    { key: 'restock', label: 'Restock Item', category: 'Inventory' },
+    { key: 'duplicate_customer', label: 'Duplicate Customer', category: 'Inventory' },
+    { key: 'platform_sales', label: 'Platform Sale Details', category: 'Inventory' },
+    { key: 'showroom_pos', label: 'Showroom POS', category: 'Inventory' },
     // Settings
     { key: 'delivery_settings', label: 'Delivery Settings', category: 'Settings' },
     { key: 'media_library', label: 'Media Library', category: 'Settings' },
@@ -367,10 +499,7 @@ router.get('/page-keys', protect, authorize('super_admin'), async (req, res) => 
     { key: 'settings', label: 'Settings', category: 'Settings' }
   ];
 
-  res.json({
-    success: true,
-    data: pageKeys
-  });
+  res.json({ success: true, data: pageKeys });
 });
 
 module.exports = router;
