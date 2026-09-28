@@ -204,6 +204,9 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/why-choose-us', whyChooseUsRoutes);
 app.use('/api/admin/why-choose-us', whyChooseUsRoutes);
 
+app.use('/api/footer', footerRoutes);
+app.use('/api/admin/footer', footerRoutes);
+
 // Admin Routes
 app.use('/api/admin/email-settings', emailSettingsRoutes);
 app.use('/api/admin/media', mediaRoutes);
@@ -266,8 +269,12 @@ app.use('/api/delivery', deliveryRoutes);
 app.use('/api/barcodes', barcodeRoutes);
 
 // Footer Routes
-app.use('/api/footer', footerRoutes);
-app.use('/api/admin/footer', footerRoutes);
+// app.use('/api/footer', footerRoutes);
+// app.use('/api/admin/footer', footerRoutes);
+
+// app.use('/api/footer', footerRoutes);
+
+// app.use('/api/admin/footer', footerRoutes);
 
 // Homepage Routes
 app.use('/api/homepage', homepageRoutes);

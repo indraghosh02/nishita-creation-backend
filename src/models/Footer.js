@@ -1,3 +1,4 @@
+
 // // backend/src/models/Footer.js
 // const mongoose = require('mongoose');
 
@@ -26,11 +27,11 @@
 //   }
 // });
 
-// // Social Link Schema (for embedded social links in support column)
+// // Social Link Schema
 // const socialLinkSchema = new mongoose.Schema({
 //   platform: {
 //     type: String,
-//     enum: ['facebook', 'instagram', 'twitter', 'youtube', 'linkedin', 'whatsapp'],
+//     enum: ['facebook', 'instagram', 'twitter', 'youtube', 'linkedin', 'whatsapp', 'pinterest', 'tiktok'],
 //     required: true
 //   },
 //   url: {
@@ -61,7 +62,7 @@
 //     default: 'links'
 //   },
 //   items: [columnItemSchema],
-//   socialLinks: [socialLinkSchema], // For 'support' and 'social' column types
+//   socialLinks: [socialLinkSchema],
 //   customContent: {
 //     type: String,
 //     default: ''
@@ -100,22 +101,32 @@
 
 // // Main Footer Schema
 // const footerSchema = new mongoose.Schema({
+//   // Background Image
+//   backgroundImage: {
+//     type: String,
+//     default: ''
+//   },
+//   backgroundPublicId: {
+//     type: String,
+//     default: ''
+//   },
+  
 //   company: {
 //     name: {
 //       type: String,
 //       required: true,
 //       trim: true,
-//       default: 'Smart Gadget'
+//       default: 'Beauty Bucket'
 //     },
 //     tagline: {
 //       type: String,
 //       trim: true,
-//       default: 'Premium Gadgets at Your Fingertips'
+//       default: 'Premium Beauty Essentials'
 //     },
 //     description: {
 //       type: String,
 //       trim: true,
-//       default: ''
+//       default: 'Discover premium beauty products with expert care, fast delivery, and a touch of luxury across Bangladesh.'
 //     },
 //     address: {
 //       type: String,
@@ -130,7 +141,7 @@
 //     email: {
 //       type: String,
 //       trim: true,
-//       default: 'support@smartproductbuy.com'
+//       default: 'support@beautybucket.com'
 //     },
 //     hours: {
 //       type: String,
@@ -139,7 +150,7 @@
 //     },
 //     logoUrl: {
 //       type: String,
-//       default: ''
+//       default: '/images/logo3.png'
 //     },
 //     logoPublicId: {
 //       type: String,
@@ -177,7 +188,7 @@
 //   timestamps: true
 // });
 
-// // Indexes for better query performance
+// // Indexes
 // footerSchema.index({ isActive: 1 });
 // footerSchema.index({ updatedAt: -1 });
 
@@ -187,28 +198,26 @@
 // backend/src/models/Footer.js
 const mongoose = require('mongoose');
 
-// Column Item Schema
+// ============================================================
+// COLUMN ITEM — can be a normal link OR a category reference
+// ============================================================
 const columnItemSchema = new mongoose.Schema({
-  id: {
-    type: String,
-    required: true
-  },
+  id: { type: String, required: true },
+  // 'link'  = plain link (label + url)
+  // 'category' = category reference (label + categoryId, url auto-built)
+  // legacy contact types kept for backward compat:
   type: {
     type: String,
-    enum: ['address', 'phone', 'email', 'hours', 'link'],
+    enum: ['link', 'category', 'address', 'phone', 'email', 'hours'],
     default: 'link'
   },
-  label: {
-    type: String,
-    trim: true
-  },
-  value: {
-    type: String,
-    trim: true
-  },
-  url: {
-    type: String,
-    trim: true
+  label: { type: String, trim: true },
+  value: { type: String, trim: true },     // used by contact types
+  url: { type: String, trim: true },       // used by link type
+  categoryId: {                            // used by category type
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Category',
+    default: null
   }
 });
 
@@ -219,28 +228,14 @@ const socialLinkSchema = new mongoose.Schema({
     enum: ['facebook', 'instagram', 'twitter', 'youtube', 'linkedin', 'whatsapp', 'pinterest', 'tiktok'],
     required: true
   },
-  url: {
-    type: String,
-    trim: true,
-    default: ''
-  },
-  active: {
-    type: Boolean,
-    default: true
-  }
+  url: { type: String, trim: true, default: '' },
+  active: { type: Boolean, default: true }
 });
 
 // Column Schema
 const columnSchema = new mongoose.Schema({
-  id: {
-    type: String,
-    required: true
-  },
-  title: {
-    type: String,
-    required: true,
-    trim: true
-  },
+  id: { type: String, required: true },
+  title: { type: String, required: true, trim: true },
   type: {
     type: String,
     enum: ['links', 'support', 'contact', 'social', 'custom'],
@@ -248,10 +243,7 @@ const columnSchema = new mongoose.Schema({
   },
   items: [columnItemSchema],
   socialLinks: [socialLinkSchema],
-  customContent: {
-    type: String,
-    default: ''
-  }
+  customContent: { type: String, default: '' }
 });
 
 // Trust Badge Schema
@@ -261,14 +253,8 @@ const trustBadgeSchema = new mongoose.Schema({
     enum: ['authentic', 'warranty', 'delivery', 'secure', 'trusted', 'return', 'support'],
     required: true
   },
-  label: {
-    type: String,
-    required: true
-  },
-  active: {
-    type: Boolean,
-    default: true
-  }
+  label: { type: String, required: true },
+  active: { type: Boolean, default: true }
 });
 
 // Payment Method Schema
@@ -278,102 +264,41 @@ const paymentMethodSchema = new mongoose.Schema({
     enum: ['visa', 'mastercard', 'paypal', 'applepay', 'googlepay', 'amex', 'bkash', 'nagad', 'rocket'],
     required: true
   },
-  active: {
-    type: Boolean,
-    default: true
-  }
+  active: { type: Boolean, default: true }
 });
 
 // Main Footer Schema
 const footerSchema = new mongoose.Schema({
-  // Background Image
-  backgroundImage: {
-    type: String,
-    default: ''
-  },
-  backgroundPublicId: {
-    type: String,
-    default: ''
-  },
-  
+  backgroundImage: { type: String, default: '' },
+  backgroundPublicId: { type: String, default: '' },
+
   company: {
-    name: {
-      type: String,
-      required: true,
-      trim: true,
-      default: 'Beauty Bucket'
-    },
-    tagline: {
-      type: String,
-      trim: true,
-      default: 'Premium Beauty Essentials'
-    },
+    name: { type: String, required: true, trim: true, default: 'Beauty Bucket' },
+    tagline: { type: String, trim: true, default: 'Premium Beauty Essentials' },
     description: {
       type: String,
       trim: true,
       default: 'Discover premium beauty products with expert care, fast delivery, and a touch of luxury across Bangladesh.'
     },
-    address: {
-      type: String,
-      trim: true,
-      default: 'Dhaka, Bangladesh'
-    },
-    phone: {
-      type: String,
-      trim: true,
-      default: '+880 1XXXXXXXXX'
-    },
-    email: {
-      type: String,
-      trim: true,
-      default: 'support@beautybucket.com'
-    },
-    hours: {
-      type: String,
-      trim: true,
-      default: 'Always Open • 24/7 Online Ordering • Quick Response'
-    },
-    logoUrl: {
-      type: String,
-      default: '/images/logo3.png'
-    },
-    logoPublicId: {
-      type: String,
-      default: ''
-    }
+    address: { type: String, trim: true, default: 'Dhaka, Bangladesh' },
+    phone: { type: String, trim: true, default: '+880 1XXXXXXXXX' },
+    email: { type: String, trim: true, default: 'support@beautybucket.com' },
+    hours: { type: String, trim: true, default: 'Always Open • 24/7 Online Ordering • Quick Response' },
+    logoUrl: { type: String, default: '/images/logo3.png' },
+    logoPublicId: { type: String, default: '' }
   },
+
   columns: [columnSchema],
   trustBadges: [trustBadgeSchema],
   paymentMethods: [paymentMethodSchema],
-  footerText: {
-    type: String,
-    default: 'All rights reserved.'
-  },
-  showCopyright: {
-    type: Boolean,
-    default: true
-  },
-  showTrustBadges: {
-    type: Boolean,
-    default: true
-  },
-  showPaymentMethods: {
-    type: Boolean,
-    default: true
-  },
-  isActive: {
-    type: Boolean,
-    default: true
-  },
-  updatedBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
-  }
-}, {
-  timestamps: true
-});
+  footerText: { type: String, default: 'All rights reserved.' },
+  showCopyright: { type: Boolean, default: true },
+  showTrustBadges: { type: Boolean, default: true },
+  showPaymentMethods: { type: Boolean, default: true },
+  isActive: { type: Boolean, default: true },
+  updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+}, { timestamps: true });
 
-// Indexes
 footerSchema.index({ isActive: 1 });
 footerSchema.index({ updatedAt: -1 });
 
